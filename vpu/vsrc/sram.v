@@ -111,6 +111,7 @@
       default: begin 
           if(slv_reg_wren) begin
               $display("SRAM WIRTE ERROR: should not reach here");
+              $display("sram_AXI_WSTRB = %b", sram_AXI_WSTRB);
               $finish;
           end
       end
@@ -287,6 +288,6 @@
      end
  end
 
-endmodule
+ endmodule
 
 

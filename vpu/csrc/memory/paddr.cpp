@@ -86,7 +86,6 @@ word_t paddr_read(paddr_t addr, int len) {
       if(addr != cpu.pc + 4) mtrace_push(addr, len, cpu.pc, false, data);
     #endif
     return data;
-
   }
   IFDEF(CONFIG_DEVICE, return mmio_read(addr, len));
   out_of_bound(addr);

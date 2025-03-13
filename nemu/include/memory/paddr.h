@@ -21,7 +21,11 @@
 #define PMEM_LEFT  ((paddr_t)CONFIG_MBASE)
 #define PMEM_RIGHT ((paddr_t)CONFIG_MBASE + CONFIG_MSIZE - 1)
 #ifdef CONFIG_TARGET_SHARE
-#define RESET_VECTOR (paddr_t)0x30000000
+  #ifdef CONFIG_TARGET_SHARE_VPU
+  #define RESET_VECTOR (paddr_t)0x80000000
+  #else
+  #define RESET_VECTOR (paddr_t)0x30000000
+  #endif
 #else
 #define RESET_VECTOR (PMEM_LEFT + CONFIG_PC_RESET_OFFSET)
 #endif

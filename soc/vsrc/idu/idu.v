@@ -45,9 +45,9 @@ localparam                              ALU_SLT         =  10'd8   ;
 localparam                              ALU_SLTU        =  10'd16  ;
 localparam                              ALU_XOR         =  10'd32  ;
 localparam                              ALU_SRL         =  10'd64  ;
-localparam                              ALU_SRA         =  10'd512  ;
 localparam                              ALU_OR          =  10'd128 ;
 localparam                              ALU_AND         =  10'd256 ;
+localparam                              ALU_SRA         =  10'd512  ;
 
 //EXU_SRC_SEL
 localparam                              EXU_SEL_REG = 4'b0001        ;
@@ -146,8 +146,8 @@ assign o_alu_opt =  (TYPES | TYPEI_LOAD | TYPELUI | TYPEAUIPC | TYPEJAL) ? ALU_A
                     (exu_opt ==  SLT           )  ? ALU_SLT  :
                     (exu_opt ==  SLTU          )  ? ALU_SLTU :
                     (exu_opt ==  XOR           )  ? ALU_XOR  :
-                    (exu_opt ==  SRL_SRA &&  o_if_unsigned      )  ? ALU_SRL  :
-                    (exu_opt ==  SRL_SRA && ~o_if_unsigned      )  ? ALU_SRA  :
+                    (exu_opt ==  SRL_SRA &&  ~o_if_unsigned      )  ? ALU_SRL  :
+                    (exu_opt ==  SRL_SRA &&  o_if_unsigned      )  ? ALU_SRA  :
                     (exu_opt ==  OR            )  ? ALU_OR   :
                     (exu_opt ==  AND           )  ? ALU_AND  :
                     ALU_ADD;

@@ -90,40 +90,9 @@ static inline bool in_uart(paddr_t addr) {
 
 bool difftest_step(vaddr_t pc, vaddr_t npc){
 
-  // CPU_state ref_r;
-  // if(is_skip_ref_delay){
-  //   is_skip_ref_delay = false;
-  //   ref_difftest_regcpy(&cpu, DIFFTEST_TO_REF, pc);
-  //   if (is_skip_ref) {
-  //     // to skip the checking of an instruction, just copy the reg state to reference design
-  //     is_skip_ref_delay = true; // delay one cycle to skip the instruction
-  //     is_skip_ref = false;
-  //   }
-  //   else ref_difftest_exec(1);
-  //   return 1;
-  // }
-
-  // ref_difftest_regcpy(&ref_r, DIFFTEST_TO_DUT, 0);
-  // bool reg_eqa = checkregs(&ref_r, pc);
-
-  // if (is_skip_ref) {
-  //   // to skip the checking of an instruction, just copy the reg state to reference design
-  //   is_skip_ref_delay = true; // delay one cycle to skip the instruction
-  //   is_skip_ref = false;
-  // }  
-  // else ref_difftest_exec(1);
-
-  // return reg_eqa;
   CPU_state ref_r;
-
-  // if(skip_nr > 0){
-  //   skip_nr --;
-  //   return 1;
-  // }
-
-  if(cpu.pc == 0xa0019b78 || cpu.pc == 0xa0019ccc || cpu.pc == 0xa0019cd0){
-    is_skip_ref = true;
-  }
+  
+  bool is_skip_ref = false;
 
   if(is_skip_ref){
     ref_difftest_regcpy(&cpu, DIFFTEST_TO_REF, 0);

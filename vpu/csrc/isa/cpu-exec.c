@@ -157,20 +157,14 @@ void exec_once(Decode *s){
 }
 
 static int trace_and_difftest(Decode *s, vaddr_t dnpc) {
-        int flag = 0;
         #ifdef CONFIG_DIFFTEST
-        if(top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__wbu1__DOT__diff){
+        if(top->rootp->top__DOT__cpu__DOT__wbu__DOT__diff){
           if(!difftest_step(s->pc, s->dnpc)) {
-            flag = 1;
+            return 0;
           }
         }
         #endif
-        #ifdef CONFIG_WP
-        if(wp_check()){
-          flag = 1;
-        }
-        #endif
-        return flag;
+        return 1;
 }
 
 void cpu_exec(uint64_t n){
@@ -206,7 +200,7 @@ void cpu_exec(uint64_t n){
           g_print_step --;
         }
         #endif
-        if(trace_and_difftest(&s, s.dnpc)){
+        if(!trace_and_difftest(&s, s.dnpc)){
           break;
         }
     }
@@ -217,5 +211,5 @@ bool if_end(){
 }
 
 int hit_goodtrap(){
-  return if_end() && (cpu.gpr[10] == 0);
+  return (cpu.gpr[10] == 0);
 }

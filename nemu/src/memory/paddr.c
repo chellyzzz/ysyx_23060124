@@ -33,28 +33,45 @@ static uint8_t *uart = NULL;
 uint8_t* guest_to_host(paddr_t paddr) { 
 
   #ifndef CONFIG_TARGET_SHARE
-    return pmem + paddr - CONFIG_MBASE; 
+    if (in_pmem(paddr)) {
+      return pmem + paddr - CONFIG_MBASE;
+    }
+    else {
+      Log("paddr = " FMT_PADDR" is out of definition", paddr);
+      return NULL;
+    }
   #else
-  if (in_pmem(paddr)) {
-    return pmem + paddr - CONFIG_MBASE;
-  }
+    #ifdef CONFIG_TARGET_SHARE_VPU
+    if (in_pmem(paddr)) {
+      return pmem + paddr - CONFIG_MBASE;
+    }
+    else {
+      Log("paddr = " FMT_PADDR" is out of definition", paddr);
+      return NULL;
+    }
+    #else
+    if (in_pmem(paddr)) {
+      return pmem + paddr - CONFIG_MBASE;
+    }
 
-  else if(in_sram(paddr)) {
-    return sram + paddr - SRAM_BASE;
-  }
-  else if(in_sdram(paddr)) {
-    return sdram + paddr - SDRAM_BASE;
-  }
-  else if(in_flash(paddr)) {
-    return flash + paddr - FLASH_BASE;
-  }
-  else if(in_uart(paddr)) {
-    return uart + paddr - 0x10000000;
-  }
-  else {
-    Log("paddr = " FMT_PADDR" is out of definition", paddr);
-    return NULL;
-  }
+    else if(in_sram(paddr)) {
+      return sram + paddr - SRAM_BASE;
+    }
+    else if(in_sdram(paddr)) {
+      return sdram + paddr - SDRAM_BASE;
+    }
+    else if(in_flash(paddr)) {
+      return flash + paddr - FLASH_BASE;
+    }
+    else if(in_uart(paddr)) {
+      return uart + paddr - 0x10000000;
+    }
+    else {
+      Log("paddr = " FMT_PADDR" is out of definition", paddr);
+      return NULL;
+    }
+    #endif
+
   #endif
 }
 
@@ -77,7 +94,6 @@ static void pmem_write(paddr_t addr, int len, word_t data) {
 }
 
 static void out_of_bound(paddr_t addr) {
-  IFDEF(CONFIG_MTRACE, print_out_of_bound());
   panic("address = " FMT_PADDR " is out of bound of pmem [" FMT_PADDR ", " FMT_PADDR "] at pc = " FMT_WORD,
       addr, PMEM_LEFT, PMEM_RIGHT, cpu.pc);
 }
@@ -142,7 +158,7 @@ word_t paddr_read(paddr_t addr, int len) {
   // }
   IFDEF(CONFIG_MTRACE, mtrace_push(addr, len, cpu.pc, false, 0));
   word_t data;
-  #ifdef CONFIG_TARGET_SHARE
+  #if defined(CONFIG_TARGET_SHARE) && !defined(CONFIG_TARGET_SHARE_VPU)
   if (likely(in_flash(addr)||in_sdram(addr)||in_sram(addr)||in_uart(addr))) {
     data = pmem_read(addr, len);
     return data;
@@ -176,20 +192,27 @@ void paddr_write(paddr_t addr, int len, word_t data) {
   // }
   IFDEF(CONFIG_MTRACE, mtrace_push(addr, len, cpu.pc, true, data));
   #ifdef CONFIG_TARGET_SHARE
-  if (in_sdram(addr)||in_sram(addr)) {
-    pmem_write(addr, len, data);
-    return ;
-  }
-  else if(in_uart(addr)){
-    return ;
-  }
-  else if(unlikely(in_flash(addr))) {
-    printf("write to flash! error!\n");
-    assert(0);
-    return;
-  }
-  out_of_bound(addr);
-
+    #ifdef CONFIG_TARGET_SHARE_VPU
+      if (likely(in_pmem(addr))) {
+        pmem_write(addr, len, data); 
+        return; 
+      }    
+    #else
+      if (in_sdram(addr)||in_sram(addr)) {
+        pmem_write(addr, len, data);
+        return ;
+      }
+      else if(in_uart(addr)){
+        return ;
+      }
+      else if(unlikely(in_flash(addr))) {
+        printf("write to flash! error!\n");
+        assert(0);
+        return;
+      }
+      out_of_bound(addr);
+      
+    #endif
   #else
   if (likely(in_pmem(addr))) {
     pmem_write(addr, len, data); 

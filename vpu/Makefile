@@ -4,7 +4,7 @@ VNAME = V$(TOPNAME)
 
 BUILD_DIR = $(VPU_HOME)/build
 OBJ_DIR = $(BUILD_DIR)/obj_dir
-
+BIN = $(BUILD_DIR)/$(VNAME)
 $(shell mkdir -p $(BUILD_DIR))
 
 # Verilator
@@ -39,26 +39,26 @@ ifeq ($(CONFIG_DIFFTEST), 1)
 endif
 
 # NPC_FLAGS += $(ARGS)
-NPC_FLAGS += --log=$(BUILD_DIR)/npc-log.txt
-# NPC_FLAGS += -b
+# NPC_FLAGS += --log=$(BUILD_DIR)/npc-log.txt
+NPC_FLAGS += -b
 NPC_FLAGS += -i $(IMAGE)
 
 VSRCS += $(shell find $(abspath $(VPU_HOME)/vsrc) -name "*.v" -or -name "*.sv")
 CSRCS += $(shell find $(abspath $(VPU_HOME)/csrc) -name "*.c" -or -name "*.cc" -or -name "*.cpp")
-
+HSRCS += $(shell find $(abspath $(VPU_HOME)/csrc) -name "*.h")
 LDFLAGS += -lLLVM-14 -lreadline 
 LDFLAGS += -lSDL2 -lSDL2_image
 
-default: compile
+default: $(BIN)
 	
-compile: $(VSRCS) $(CSRCS)
+$(BIN): $(VSRCS) $(CSRCS) $(HSRCS)
 	@rm -rf $(OBJ_DIR)
 	$(VERILATOR) $(C_FLAGS) $(VERILATOR_FLAGS) \
 	-top $(TOPNAME) $(VSRCS) $(CSRCS) \
 	$(addprefix -LDFLAGS , $(LDFLAGS)) \
-	--Mdir $(OBJ_DIR) -o $(BUILD_DIR)/$(VNAME) \
+	--Mdir $(OBJ_DIR) -o $(BIN) \
 
-run: compile
+run: $(BIN)
 	$(BUILD_DIR)/$(VNAME) $(NPC_FLAGS)
 
 wave:

@@ -65,6 +65,7 @@ __EXPORT void difftest_raise_intr(word_t NO) {
 }
 
 __EXPORT void difftest_init(int port) {
+  #ifndef CONFIG_TARGET_SHARE_VPU
   void init_mem();
   void init_sram();
   void init_flash();
@@ -76,6 +77,12 @@ __EXPORT void difftest_init(int port) {
   init_flash();
   init_sdram();
   init_uart();
+  #else
+  void init_mem();
+  init_mem();
+
+  
+  #endif
   /* Perform ISA dependent initialization. */
   init_isa();
 }

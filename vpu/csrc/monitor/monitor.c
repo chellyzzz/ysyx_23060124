@@ -128,7 +128,6 @@ void init_monitor(int argc, char *argv[]) {
   init_log(log_file);
 
   /* Initialize memory mrom sram. */
-  printf("hit here\n");
   init_mem();
 
   /* Initialize devices. */
