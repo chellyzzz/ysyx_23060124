@@ -1,11 +1,18 @@
 TOPNAME = top
+MAIN = top.topMain
 
 VNAME = V$(TOPNAME)
 
 BUILD_DIR = $(VPU_HOME)/build
 OBJ_DIR = $(BUILD_DIR)/obj_dir
 BIN = $(BUILD_DIR)/$(VNAME)
+
 $(shell mkdir -p $(BUILD_DIR))
+SCALA_FILE = $(shell find $(abspath $(VPU_HOME)/main/scala) -name "*.scala" )
+TOP_V = $(BUILD_DIR)/$(TOPNAME).v
+
+$(TOP_V): $(SCALA_FILE)
+	mill $(TOPNAME).runMain $(MAIN) -td $(@D) --output-file $(@F)
 
 # Verilator
 VERILATOR=verilator
@@ -43,7 +50,7 @@ endif
 NPC_FLAGS += -b
 NPC_FLAGS += -i $(IMAGE)
 
-VSRCS += $(shell find $(abspath $(VPU_HOME)/vsrc) -name "*.v" -or -name "*.sv")
+VSRCS += $(shell find $(abspath $(VPU_VSRCS)) -name "*.v" -or -name "*.sv")
 CSRCS += $(shell find $(abspath $(VPU_HOME)/csrc) -name "*.c" -or -name "*.cc" -or -name "*.cpp")
 HSRCS += $(shell find $(abspath $(VPU_HOME)/csrc) -name "*.h")
 LDFLAGS += -lLLVM-14 -lreadline 

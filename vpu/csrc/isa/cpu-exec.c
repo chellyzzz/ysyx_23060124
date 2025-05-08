@@ -92,7 +92,7 @@ void reg_update(){
   // cpu.csr.mstatus = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__Csrs__DOT__mstatus;
   // cpu.csr.mepc = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__Csrs__DOT__mepc;
   // cpu.csr.mtvec = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__Csrs__DOT__mtvec;
-  // cpu.pc = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__ifu_pc_next;
+  cpu.pc = top->rootp->top__DOT__cpu__DOT__ifu__DOT__pc_next;
   return;
 }
 #ifdef CONFIG_ITRACE
@@ -170,7 +170,8 @@ static int trace_and_difftest(Decode *s, vaddr_t dnpc) {
 void cpu_exec(uint64_t n){
     Decode s;
     int g_print_step = n <= MAX_INST_TO_PRINT && n >= 0 ? n : 0;
-    for(; n > 0; n--){
+    uint64_t max = n;
+    for(; max > 0; max--){
       if(if_end()){
         printf("Program execution has ended. To restart the program, exit NPC and run again.\n");
         Log("npc: %s at pc = " FMT_WORD,
