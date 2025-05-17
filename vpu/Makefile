@@ -8,11 +8,6 @@ OBJ_DIR = $(BUILD_DIR)/obj_dir
 BIN = $(BUILD_DIR)/$(VNAME)
 
 $(shell mkdir -p $(BUILD_DIR))
-SCALA_FILE = $(shell find $(abspath $(VPU_HOME)/main/scala) -name "*.scala" )
-TOP_V = $(BUILD_DIR)/$(TOPNAME).v
-
-$(TOP_V): $(SCALA_FILE)
-	mill $(TOPNAME).runMain $(MAIN) -td $(@D) --output-file $(@F)
 
 # Verilator
 VERILATOR=verilator

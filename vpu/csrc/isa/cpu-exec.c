@@ -171,6 +171,7 @@ void cpu_exec(uint64_t n){
     Decode s;
     int g_print_step = n <= MAX_INST_TO_PRINT && n >= 0 ? n : 0;
     uint64_t max = n;
+    // max = 1000;
     for(; max > 0; max--){
       if(if_end()){
         printf("Program execution has ended. To restart the program, exit NPC and run again.\n");
