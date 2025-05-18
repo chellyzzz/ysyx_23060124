@@ -23,6 +23,15 @@ const char *regs[] = {
   "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"
 };
 
+
+const char *vregs[] = {
+  "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7",
+  "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15",
+  "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+  "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31"
+};
+
+
 const char *csrs[] = {
   "mtevc", "mepc", "mstatus", "mcause"
 };
@@ -31,6 +40,33 @@ void isa_reg_display() {
     printf("%3s[%02d]: 0x%08x\t", regs[i], i, cpu.gpr[i]);
     if((i+1) % 4 == 0) printf("\n");
   }
+
+  printf("\n");
+  printf("=== Vector Registers (vreg[N]) ===\n");
+  // for (int i = 0; i < 32; i++) {
+  //   printf("%3s: ", vregs[i]);
+  //   for (int j = 0; j < 16 && j < VLEN_BYTES; j++) {
+  //     printf("%02x ", cpu.vstate.vreg[i][j]);
+  //   }
+  //   printf("...\n");
+  // }
+
+  for (int i = 0; i < 32; i++) {
+    printf("%3s: ", vregs[i]);
+    for (int j = 0; j < VLEN_BYTES; j += 4) {
+      uint32_t val;
+      memcpy(&val, &cpu.vstate.vreg[i][j], 4);  // 从字节数组安全读取32位整数
+      printf("0x%08x ", val);
+    }
+    printf("...\n");
+  }
+
+  printf("\n=== Vector State ===\n");
+  printf("vl     = %lu\n", cpu.vstate.vl);
+  printf("vstart = %lu\n", cpu.vstate.vstart);
+  printf("vtype  = 0x%lx\n", cpu.vstate.vtype);
+  printf("vill   = %s\n", cpu.vstate.vill ? "true" : "false");
+
 }
 
 void isa_csr_display(){

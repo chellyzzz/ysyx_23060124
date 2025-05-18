@@ -92,7 +92,13 @@ void reg_update(){
   // cpu.csr.mstatus = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__Csrs__DOT__mstatus;
   // cpu.csr.mepc = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__Csrs__DOT__mepc;
   // cpu.csr.mtvec = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__Csrs__DOT__mtvec;
-  cpu.pc = top->rootp->top__DOT__cpu__DOT__ifu__DOT__pc_next;
+  if(top->rootp->top__DOT__cpu__DOT__wbu__DOT__o_pc_next != 0){
+    cpu.pc = top->rootp->top__DOT__cpu__DOT__wbu__DOT__o_pc_next;
+    // if(cpu.pc == 0x80000074){
+    //   if_stop = true;
+    // }
+  }
+  
   return;
 }
 #ifdef CONFIG_ITRACE

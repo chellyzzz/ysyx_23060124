@@ -37,7 +37,8 @@ CONFIG_DIFFTEST := $(shell grep -E '^#define CONFIG_DIFFTEST[ \t]+1' $(VPU_HOME)
 
 # Check if CONFIG_DIFFTEST is defined and equals 1
 ifeq ($(CONFIG_DIFFTEST), 1)
-    NPC_FLAGS += -d $(NEMU_HOME)/build/riscv32-nemu-interpreter-so 
+    # NPC_FLAGS += -d $(NEMU_HOME)/build/riscv32-nemu-interpreter-so 
+    NPC_FLAGS += -d $(NEMU_HOME)/tools/spike-diff/build/riscv32-spike-so
 endif
 
 # NPC_FLAGS += $(ARGS)

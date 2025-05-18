@@ -18,6 +18,13 @@
 
 #include <common.h>
 
+typedef struct {
+  uint8_t vreg[VREG_NUM][VLEN_BYTES]; 
+  uint64_t vl;        
+  uint64_t vstart;    
+  uint64_t vtype;     
+  bool vill;          
+} riscv_vector_state_t;
 
 typedef struct {
   word_t mtvec;
@@ -30,6 +37,9 @@ typedef struct {
   word_t gpr[MUXDEF(CONFIG_RVE, 16, 32)];
   vaddr_t pc;
   MUXDEF(CONFIG_RV64, riscv64_CSRs, riscv32_CSRs) csr;
+
+  riscv_vector_state_t vstate; // 新增向量状态
+
 } MUXDEF(CONFIG_RV64, riscv64_CPU_state, riscv32_CPU_state);
 
 // decode

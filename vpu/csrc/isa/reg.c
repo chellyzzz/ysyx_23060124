@@ -51,14 +51,14 @@ bool diff_checkregs(CPU_state *ref_r, vaddr_t pc) {
   bool flag = true;
   for (int i = 0; i < reg_num; i++) {
     if (ref_r->gpr[i] != cpu.gpr[i]) {
-      printf("error at ref.pc = 0x%08x, ref[%2d]=0x%08x, dut[%2d]=0x%08x\n", ref_r->pc, i, ref_r->gpr[i], i, cpu.gpr[i]);
+      printf("error at ref.pc = 0x%08x, ref[%2d]=0x%08x, dut.pc = 0x%08x, dut[%2d]=0x%08x\n", ref_r->pc, i, ref_r->gpr[i], cpu.pc, i, cpu.gpr[i]);
       flag = false;
     }
   }
-  // if(ref_r->pc != cpu.pc){
-  //     printf("error at pc = 0x%08x, ref_pc = 0x%08x\n", cpu.pc, ref_r->pc);
-  //     flag = false;
-  // }
+  if(ref_r->pc != cpu.pc){
+      printf("error at pc = 0x%08x, ref_pc = 0x%08x\n", cpu.pc, ref_r->pc);
+      flag = false;
+  }
   // if(ref_r->csr.mepc != cpu.csr.mepc){
   //     printf("mepc error at pc = 0x%08x\n", cpu.pc);
   //     printf("ref_r->csr.mepc = 0x%08x, cpu.csr.mepc = 0x%08x\n", ref_r->csr.mepc, cpu.csr.mepc);

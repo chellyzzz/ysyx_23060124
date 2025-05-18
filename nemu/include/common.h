@@ -31,6 +31,11 @@
 #include <stdlib.h>
 #endif
 
+
+#define VLEN 128 // or 256, 512, 1024, etc. — choose depending on your simulation goal
+#define VLEN_BYTES (VLEN / 8)
+#define VREG_NUM 32
+
 #if CONFIG_MBASE + CONFIG_MSIZE > 0x100000000ul
 #define PMEM64 1
 #endif
