@@ -98,9 +98,9 @@ void reg_update(){
     //   if_stop = true;
     // }
   }
-  
   return;
 }
+
 #ifdef CONFIG_ITRACE
 void disasm_pc(Decode* s){
   char *p = s->logbuf;
