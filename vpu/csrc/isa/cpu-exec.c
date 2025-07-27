@@ -39,7 +39,6 @@ bool dead_detector = true;
 int dead_cycles   = 0;
 #endif
 
-
 // cpu exec
 void reg_update(){  
   #ifdef MAX_DEADS
@@ -98,6 +97,10 @@ void reg_update(){
     //   if_stop = true;
     // }
   }
+  if(top->rootp->top__DOT__cpu__DOT__ifu__DOT__hit && top->rootp->top__DOT__cpu__DOT__ifu_io_i_post_ready){
+    ins_cnt ++;
+  }
+
   return;
 }
 
@@ -129,9 +132,9 @@ void verilator_sync_init(VerilatedContext* contextp_sdb, Vtop* top_sdb, Verilate
 }
 
 void decode_pc(Decode* s){
-  s->pc = top->rootp->top__DOT__cpu__DOT__ifu__DOT__pc;
-  s->snpc = top->rootp->top__DOT__cpu__DOT__ifu__DOT__pc + 4;
-  s->dnpc = top->rootp->top__DOT__cpu__DOT__ifu__DOT__pc_next;
+  s->pc   = top->rootp->top__DOT__cpu__DOT__wbu__DOT__diff_pc;
+  s->snpc = top->rootp->top__DOT__cpu__DOT__wbu__DOT__diff_pc + 4;
+  s->dnpc = top->rootp->top__DOT__cpu__DOT__wbu__DOT__o_pc_next;
   // s->isa.inst.val = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT____Vcellout__ifu2idu_regs__o_ins;
   instr = s->isa.inst.val;
   #ifdef CONFIG_ITRACE
@@ -165,8 +168,17 @@ void exec_once(Decode *s){
 static int trace_and_difftest(Decode *s, vaddr_t dnpc) {
         #ifdef CONFIG_DIFFTEST
         if(top->rootp->top__DOT__cpu__DOT__wbu__DOT__diff){
-          if(!difftest_step(s->pc, s->dnpc)) {
-            return 0;
+          if(top->rootp->top__DOT__cpu__DOT__wbu__DOT__o_pc_update){
+            if(!difftest_step(s->pc, s->dnpc)) {
+              printf("pc = " FMT_WORD ", dnpc = " FMT_WORD "\n", s->pc, s->dnpc);
+              return 0;
+            }
+          }
+          else{
+            if(!difftest_step(s->pc, s->snpc)) {
+              printf("pc = " FMT_WORD ", snpc = " FMT_WORD "\n", s->pc, s->snpc);
+              return 0;
+            }
           }
         }
         #endif
@@ -177,14 +189,13 @@ void cpu_exec(uint64_t n){
     Decode s;
     int g_print_step = n <= MAX_INST_TO_PRINT && n >= 0 ? n : 0;
     uint64_t max = n;
-    // max = 1000;
     for(; max > 0; max--){
       if(if_end()){
         printf("Program execution has ended. To restart the program, exit NPC and run again.\n");
         Log("npc: %s at pc = " FMT_WORD,
         (hit_goodtrap() ? ANSI_FMT("HIT GOOD TRAP", ANSI_FG_GREEN) :
           ANSI_FMT("HIT BAD TRAP", ANSI_FG_RED)),
-        cpu.pc);       
+        cpu.pc);      
         // printf("\nPerformance counters\n");
         // printf("    cycles      : %ld\n", cycles);
         // printf("    instrs      : %ld\n", ins_cnt);
@@ -209,6 +220,8 @@ void cpu_exec(uint64_t n){
         }
         #endif
         if(!trace_and_difftest(&s, s.dnpc)){
+          printf("Program execution has ended. To restart the program, exit NPC and run again.\n");
+          Log("npc: %s at pc = " FMT_WORD, ANSI_FMT("HIT BAD TRAP", ANSI_FG_RED), cpu.pc);    
           break;
         }
     }
@@ -219,5 +232,6 @@ bool if_end(){
 }
 
 int hit_goodtrap(){
+  printf("ins: %ld, cycles: %ld\n", ins_cnt, cycles); 
   return (cpu.gpr[10] == 0);
 }

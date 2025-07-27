@@ -23,7 +23,7 @@ module ysyx_23060124__icache #(
     output             [   2:0]         M_AXI_ARSIZE               ,
     output             [   1:0]         M_AXI_ARBURST              ,
 
-    input                               clock                        ,
+    input                               clock                      ,
     input                               rst_n_sync                 ,
     input              [ADDR_WIDTH-1:0] addr                       ,
     output             [DATA_WIDTH-1:0] data                       ,
