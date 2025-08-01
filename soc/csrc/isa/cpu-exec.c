@@ -232,20 +232,20 @@ void cpu_exec(uint64_t n){
         (hit_goodtrap() ? ANSI_FMT("HIT GOOD TRAP", ANSI_FG_GREEN) :
           ANSI_FMT("HIT BAD TRAP", ANSI_FG_RED)),
         cpu.pc);       
-        printf("\nPerformance counters\n");
-        printf("    cycles      : %ld\n", cycles);
-        printf("    instrs      : %ld\n", ins_cnt);
-        printf("              Fetch per cycles: %ld\n", ifu_delay_end /ins_cnt);
-        printf("              Cache hit rates :  %f\n", (float)(ins_cnt - icache_miss) / (float)ins_cnt);
-        printf("    Load  instrs: %ld\n", load_cnt);
-        printf("              Load  per cycles: %ld\n", load_delay_end /load_cnt);
-        printf("    Store instrs: %ld\n", store_cnt);
-        printf("              Store per cycles: %ld\n", store_delay_end/store_cnt);
-        printf("    Brch  instrs: %ld\n", brch_cnt);
-        printf("    Jal   instrs: %ld\n", jal_cnt);
-        printf("    csr   instrs: %ld\n", csr_cnt);
-        float ipc = (float)ins_cnt / (float)cycles;
-        printf("    IPC:          %f\n", ipc); 
+        // printf("\nPerformance counters\n");
+        // printf("    cycles      : %ld\n", cycles);
+        // printf("    instrs      : %ld\n", ins_cnt);
+        // printf("              Fetch per cycles: %ld\n", ifu_delay_end /ins_cnt);
+        // printf("              Cache hit rates :  %f\n", (float)(ins_cnt - icache_miss) / (float)ins_cnt);
+        // printf("    Load  instrs: %ld\n", load_cnt);
+        // printf("              Load  per cycles: %ld\n", load_delay_end /load_cnt);
+        // printf("    Store instrs: %ld\n", store_cnt);
+        // printf("              Store per cycles: %ld\n", store_delay_end/store_cnt);
+        // printf("    Brch  instrs: %ld\n", brch_cnt);
+        // printf("    Jal   instrs: %ld\n", jal_cnt);
+        // printf("    csr   instrs: %ld\n", csr_cnt);
+        // float ipc = (float)ins_cnt / (float)cycles;
+        // printf("    IPC:          %f\n", ipc); 
         break;
       }
         exec_once(&s);

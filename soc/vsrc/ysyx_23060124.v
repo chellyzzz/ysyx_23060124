@@ -220,7 +220,7 @@ ysyx_23060124__icache icache1(
     .rst_n_sync                        (rst_n_sync                ),
     .addr                              (ifu_req_addr              ),
     .data                              (icache_ins                ),
-    .hit                               (icache_hit              ),
+    .hit                               (icache_hit                ),
     .fence_i                           (fence_i                   ),
   //read data channel
     .M_AXI_RDATA                       (IFU_SRAM_AXI_RDATA        ),
@@ -265,7 +265,7 @@ ysyx_23060124_ifu_idu_regs ifu2idu_regs(
     .i_ins                             (ins                       ),
     .o_ins                             (ifu2idu_ins               ),
     .clock                             (clock                     ),
-    .reset                             (reset  || pc_update_en    ),
+    .reset                             (reset  || pc_update_en || idu2exu_fence_i  ),
 
     .icache_hit                        (icache_hit                ),
     .i_pre_valid                       (pc_update_en              ),
@@ -319,11 +319,12 @@ wire                                    idu2exu_brch               ;
 wire                                    idu2exu_jal                ;
 wire                                    idu2exu_jalr               ;
 wire                                    idu2exu_ebreak             ;
+wire                                    idu2exu_fence_i            ;
 wire                   [  11:0]         idu2exu_csr_addr           ;
 
 ysyx_23060124_idu_exu_regs idu2exu_regs(
     .clock                             (clock                     ),
-    .reset                             (reset || pc_update_en     ),
+    .reset                             (reset || pc_update_en || idu2exu_fence_i   ),
     .i_pre_valid                       (ifu2idu_valid             ),
     .i_post_ready                      (exu2idu_ready             ),
     .o_pre_ready                       (idu2ifu_ready             ),
@@ -377,6 +378,7 @@ ysyx_23060124_idu_exu_regs idu2exu_regs(
     .o_jal                             (idu2exu_jal               ),
     .o_jalr                            (idu2exu_jalr              ),
     .o_ebreak                          (idu2exu_ebreak            ),
+    .o_fence_i                         (idu2exu_fence_i           ),
     //
     .o_csr_addr                        (idu2exu_csr_addr          )
 );

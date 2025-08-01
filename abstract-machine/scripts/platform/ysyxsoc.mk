@@ -1,4 +1,6 @@
 AM_SRCS := riscv/ysyxsoc/start.S \
+           platform/dummy/vme.c \
+           platform/dummy/mpe.c \
            riscv/ysyxsoc/trm.c \
 		   riscv/ysyxsoc/bootloader.c \
            riscv/ysyxsoc/trap.S \
@@ -6,8 +8,6 @@ AM_SRCS := riscv/ysyxsoc/start.S \
            riscv/ysyxsoc/timer.c \
            riscv/ysyxsoc/cte.c \
            riscv/ysyxsoc/input.c \
-           platform/dummy/vme.c \
-           platform/dummy/mpe.c \
 		   riscv/ysyxsoc/uart.c \
 		   riscv/ysyxsoc/gpu.c \
 
