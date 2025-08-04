@@ -59,6 +59,7 @@ NPC_FLAGS += -b
 NPC_FLAGS += -i $(IMAGE)
 
 VSRCS += $(shell find $(abspath $(SOC_HOME)/vsrc) \( -name "*.v" -o -name "*.sv" \) -print)
+# VSRCS += combined.v
 VSRCS += $(shell find $(YSYX_SOC_HOME)/perip -name "*.v" -print)
 VSRCS += $(shell find $(YSYX_SOC_HOME)/build -name "*.v" -print)
 CSRCS += $(shell find $(abspath ./csrc) -name "*.c" -or -name "*.cc" -or -name "*.cpp")
@@ -97,7 +98,7 @@ menuconfig:
 sim: run wave
 
 combined :
-	cat $(find ./vsrc/ -name "*.v") > combined.v
+	find ./vsrc -type f -name "*.v" | sort | xargs cat > ./combined.v
 
 clean:
 	rm -rf $(BUILD_DIR)

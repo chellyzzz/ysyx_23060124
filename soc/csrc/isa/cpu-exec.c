@@ -32,7 +32,7 @@ uint64_t cycles = 0;
 uint64_t ins_cnt = 0;
 
 #define MAX_INST_TO_PRINT 11
-#define PC_WAVE_START 0x30000000
+// #define PC_WAVE_START 0xa0000018
 #ifdef CONFIG_WP
 bool wp_check();
 #endif
@@ -43,7 +43,7 @@ static VerilatedVcdC* vcd;
 static word_t instr;
 extern bool wave_enable;
 
-// #define MAX_DEADS 100000
+#define MAX_DEADS 100000
 
 #ifdef MAX_DEADS  
 bool dead_detector = true;
@@ -64,9 +64,10 @@ extern bool ftrace_enable;
 
 // cpu exec
 void reg_update(){  
-  if(top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__wbu1__DOT__diff){
-    ins_cnt ++;
-  }
+  
+  // if(top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__wbu1__DOT__diff){
+  //   ins_cnt ++;
+  // }
   #ifdef MAX_DEADS
   if(dead_detector){
     if(cpu.pc == top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__ifu_pc_next){
@@ -87,11 +88,23 @@ void reg_update(){
   cpu.csr.mstatus = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__Csrs__DOT__mstatus;
   cpu.csr.mepc = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__Csrs__DOT__mepc;
   cpu.csr.mtvec = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__Csrs__DOT__mtvec;
-  cpu.pc = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__ifu_pc_next;
+  int awaddr = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__exu1__DOT__exu_lsu__DOT__axi_axaddr;
+  cpu.pc = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__ifu2idu_pc;
+  int ins = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__ifu2idu_ins;
   #ifdef PC_WAVE_START
+  bool latency = true;
   if(cpu.pc == PC_WAVE_START){
     wave_enable = true;
   }
+  // else if(top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__exu1__DOT__exu_lsu__DOT__txn_pulse_store && awaddr >= 0xa0000020 && awaddr <= 0xa0000020 + 8){
+  //   printf("pc :0x%x, ins:= 0x%x;\n", cpu.pc, ins);
+  //   if(latency){
+  //     latency = false;
+  //   }
+  //   else{
+  //     wave_enable = true;
+  //   }
+  // }
   #endif
   return;
 }
@@ -126,11 +139,13 @@ void decode_pc(Decode* s){
   s->pc = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__exu2wbu_pc_next;
   s->snpc = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__exu2wbu_pc_next + 4;
   s->dnpc = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__ifu_pc_next;
-  // s->isa.inst.val = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT____Vcellout__ifu2idu_regs__o_ins;
+  s->isa.inst.val = top->rootp->ysyxSoCFull__DOT__asic__DOT__cpu__DOT__cpu__DOT__ifu2idu_ins;
   instr = s->isa.inst.val;
   #ifdef CONFIG_ITRACE
-      disasm_pc(s);
-      iringbuf_push(s);
+  if(s->pc != 0){
+    disasm_pc(s);
+    iringbuf_push(s);
+  }
   #endif
   return;
 }
@@ -224,8 +239,10 @@ void cpu_exec(uint64_t n){
     wave_enable = false;
   #endif
     Decode s;
+    uint64_t cycles = n;
+    // uint64_t cycles = 8000000;
     int g_print_step = n <= MAX_INST_TO_PRINT && n >= 0 ? n : 0;
-    for(; n > 0; n--){
+    for(; cycles > 0; cycles--){
       if(if_end()){
         printf("Program execution has ended. To restart the program, exit NPC and run again.\n");
         Log("npc: %s at pc = " FMT_WORD,

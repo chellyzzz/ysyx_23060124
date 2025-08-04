@@ -5,184 +5,129 @@
 
 #if !defined(__ISA_NATIVE__) || defined(__NATIVE_USE_KLIB__)
 
-#define PRESION_NUM 100
+#define PRINTF_BUF_SIZE 512
 
-int uinttostring(char *dst, unsigned int value) {
-    if (value == 0) {
-        dst[0] = '0';
-        dst[1] = '\0';
-        return 1;
-    }
-
-    int digits = 0;
-    unsigned int temp = value;
-    while (temp != 0) {
-        temp /= 10;
-        digits++;
-    }
-
-    char tempStr[digits + 1]; // add space for null terminator
-
-    for (int i = digits - 1; i >= 0; i--) { // start from the end
-        tempStr[i] = '0' + value % 10;
-        value /= 10;
-    }
-    tempStr[digits] = '\0'; // add null terminator
-    strncpy(dst, tempStr, digits + 1);
-    return digits;
+static int int_to_str(char *buf, int value) {
+  char tmp[32];
+  int is_negative = 0, i = 0;
+  if (value < 0) {
+    is_negative = 1;
+    value = -value;
+  }
+  do {
+    tmp[i++] = '0' + value % 10;
+    value /= 10;
+  } while (value > 0);
+  if (is_negative) tmp[i++] = '-';
+  for (int j = 0; j < i; ++j) buf[j] = tmp[i - j - 1];
+  buf[i] = '\0';
+  return i;
 }
 
-int inttostring(char *dst, int value){
-    if (value == 0) {
-        dst[0] = '0';
-        dst[1] = '\0';
-        return 1;
-    }
-
-    int isNegative = 0;
-    if (value < 0) {
-        isNegative = 1;
-        value = -value; // convert to positive
-    }
-
-    int digits = 0;
-    int temp = value;
-    while (temp != 0) {
-        temp /= 10;
-        digits++;
-    }
-
-    if (isNegative) {
-        digits++; // add space for '-' sign
-    }
-
-    char tempStr[digits + 1]; // add space for null terminator
-    if (isNegative) {
-        tempStr[0] = '-';
-    }
-
-    for (int i = digits - 1; i >= isNegative; i--) { // start from the end, skip '-' sign if present
-        tempStr[i] = '0' + value % 10;
-        value /= 10;
-    }
-    tempStr[digits] = '\0'; // add null terminator
-    strncpy(dst, tempStr, digits + 1);
-    return digits;
+static int uint_to_str(char *buf, unsigned int value) {
+  char tmp[32];
+  int i = 0;
+  do {
+    tmp[i++] = '0' + value % 10;
+    value /= 10;
+  } while (value > 0);
+  for (int j = 0; j < i; ++j) buf[j] = tmp[i - j - 1];
+  buf[i] = '\0';
+  return i;
 }
 
-int itohex(char* buf, unsigned int value) {
-    char* ptr = buf;
-    int cnt = 0;
-    for (int i = 28; i >= 0; i -= 4) {
-        unsigned int digit = (value >> i) & 0xf;
-        if (digit != 0 || cnt != 0) {
-            *(ptr++) = (digit < 10) ? ('0' + digit) : ('a' + digit - 10);
-            cnt++;
-        }
-    }
-    if (cnt == 0) {
-        *(ptr++) = '0';
-        cnt = 1;
-    }
-
-    *ptr = '\0';
-    return cnt;
-}
-
-int vsprintf(char *out, const char *fmt, va_list ap) {
-
-    int cnt = 0;
-
-    while (*fmt != '\0') {
-    if(*fmt == '%')   {
-        fmt++ ;
-        if(*fmt < '0' || *fmt > '9') {
-        switch (*fmt) {
-        case 's':              /* string */
-            char *s = va_arg(ap, char *);
-            strncpy(out + cnt,s,strlen(s));
-            cnt += strlen(s);
-            break;
-        case 'd':              /* int */
-            int d = va_arg(ap, int);
-            cnt += inttostring(out + cnt, d);
-            break;
-        case 'x':              /* hexadecimal */
-            unsigned int x = va_arg(ap, unsigned int);
-            cnt += itohex(out + cnt, x);
-            break;
-        case 'u':              /* unsigned int */
-            unsigned int u = va_arg(ap, unsigned int);
-            cnt += uinttostring(out + cnt, u);  // You need to implement uinttostring function
-            break;    
-        case 'c':
-            char sb_s = (char)va_arg(ap, int);
-            *(out + cnt) = sb_s;
-            cnt ++;
-            break;
-        default : cnt = cnt;        
-        }
-        }else{
-        char presion_buff[PRESION_NUM];
-        int i_presion = 0 ;
-        for(;*fmt >= '0' && *fmt <= '9';fmt++) {
-            presion_buff[i_presion++] = *fmt;
-        }
-        presion_buff[i_presion] = '\0' ;
-        int presion = atoi(presion_buff);
-        switch (*fmt) {
-            case 'd':              /* int */
-                int d = va_arg(ap, int);
-                char num_string[PRESION_NUM];
-                int presion_digits = inttostring(num_string, d);
-                for(int presion_temp_num = 0; presion_temp_num < presion - presion_digits; presion_temp_num ++ ) {
-                if(presion_buff[0] == '0') {
-                    *(out + cnt) = '0';
-                }else {
-                    *(out + cnt) = ' ';
-                }
-                cnt++;  
-                }
-                strncpy(out + cnt, num_string, presion_digits);
-                cnt += presion_digits;
-                break;
-            default : cnt = cnt;       
-        }
-        }
-    }else{
-        out[cnt++] = *fmt;
-    }
-    fmt++;
-    }
-    out[cnt] = '\0';
-    return cnt;
-}
-
-int printf(const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    char tmp[500];
-    int cnt = vsprintf(tmp, fmt, args);
-    putstr(tmp);
-    va_end(args);
-    return cnt;
-}
-
-
-int sprintf(char *out, const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    int written = vsprintf(out, fmt, args);
-    va_end(args);
-    return written;
-}
-
-int snprintf(char *out, size_t n, const char *fmt, ...) {
-  panic("Not implemented");
+static int uint_to_hex(char *buf, unsigned int value) {
+  const char *hex = "0123456789abcdef";
+  char tmp[32];
+  int i = 0;
+  do {
+    tmp[i++] = hex[value % 16];
+    value /= 16;
+  } while (value > 0);
+  for (int j = 0; j < i; ++j) buf[j] = tmp[i - j - 1];
+  buf[i] = '\0';
+  return i;
 }
 
 int vsnprintf(char *out, size_t n, const char *fmt, va_list ap) {
-  panic("Not implemented");
+  size_t cnt = 0;
+  char buf[32];
+
+  while (*fmt && cnt < n - 1) {
+    if (*fmt != '%') {
+      out[cnt++] = *fmt++;
+      continue;
+    }
+
+    fmt++; // skip '%'
+    switch (*fmt) {
+      case 'd': {
+        int val = va_arg(ap, int);
+        int len = int_to_str(buf, val);
+        for (int i = 0; i < len && cnt < n - 1; i++) out[cnt++] = buf[i];
+        break;
+      }
+      case 'u': {
+        unsigned int val = va_arg(ap, unsigned int);
+        int len = uint_to_str(buf, val);
+        for (int i = 0; i < len && cnt < n - 1; i++) out[cnt++] = buf[i];
+        break;
+      }
+      case 'x': {
+        unsigned int val = va_arg(ap, unsigned int);
+        int len = uint_to_hex(buf, val);
+        for (int i = 0; i < len && cnt < n - 1; i++) out[cnt++] = buf[i];
+        break;
+      }
+      case 'c': {
+        int ch = va_arg(ap, int); // char 会被提升为 int
+        out[cnt++] = (char)ch;
+        break;
+      }
+      case 's': {
+        const char *str = va_arg(ap, const char *);
+        while (*str && cnt < n - 1) out[cnt++] = *str++;
+        break;
+      }
+      case '%': {
+        out[cnt++] = '%';
+        break;
+      }
+      default:
+        // unsupported, skip
+        break;
+    }
+    fmt++;
+  }
+
+  out[cnt] = '\0';
+  return cnt;
+}
+
+int snprintf(char *out, size_t n, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  int written = vsnprintf(out, n, fmt, args);
+  va_end(args);
+  return written;
+}
+
+int sprintf(char *out, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  int written = vsnprintf(out, PRINTF_BUF_SIZE, fmt, args);
+  va_end(args);
+  return written;
+}
+
+int printf(const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  char out[PRINTF_BUF_SIZE];
+  int written = vsnprintf(out, PRINTF_BUF_SIZE, fmt, args);
+  va_end(args);
+  putstr(out);
+  return written;
 }
 
 #endif
