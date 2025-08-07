@@ -49,8 +49,7 @@ module ysyx_23060124_LSU
     output                              M_AXI_BREADY               ,
     input              [   3:0]         M_AXI_BID                  ,
   //lsu -> wbu handshake
-    input                               o_pre_ready                ,
-    input                               i_pre_valid                
+    input                               o_pre_ready                
 );
 /************parameter************/
 //exu_opt
@@ -78,7 +77,6 @@ reg                    [  31:0]         axi_axaddr                 ;
 
 reg                                     init_txn_ff                ;
 reg                                     init_txn_ff2               ;
-reg                                     init_txn_edge              ;
 reg                                     o_pre_ready_d1             ;
 
 wire                                    init_txn_pulse             ;
@@ -132,9 +130,7 @@ assign is_ls = i_load  || i_store;
 assign txn_pulse_load   = i_load  && init_txn_pulse;
 assign txn_pulse_store  = i_store && init_txn_pulse;  
 
-reg idle;
-
-always @(posedge clock)begin
+always @(posedge clock or posedge reset)begin
     if(reset)begin
       o_pre_ready_d1 <= 1'b0; 
     end
@@ -143,7 +139,7 @@ always @(posedge clock)begin
     end
 end
 
-always @(posedge clock)										      
+always @(posedge clock or posedge reset)										      
     begin                                                                        
     if (reset)                                                   
         begin                                                                    
@@ -160,7 +156,7 @@ always @(posedge clock)
         end                                                                      
     end     
 
-  // always @(posedge clock)										      
+  // always @(posedge clock or posedge reset)										      
   //   begin                                                                        
   //   if (reset)                                                   
   //       begin                                                                    
@@ -175,7 +171,7 @@ always @(posedge clock)
   //   else idle <= idle;                                                
   //   end     
 
-	  always @(posedge clock)										      
+	  always @(posedge clock or posedge reset)										      
 	  begin                                                                         
 	    if (reset)                                                   
 	      begin                                                                    
@@ -194,7 +190,7 @@ always @(posedge clock)
 	      end                                                                      
 	  end      
 
-	   always @(posedge clock)                                        
+	   always @(posedge clock or posedge reset)                                        
 	   begin                                                                         
 	     if (reset)                                                    
 	       begin                                                                     
@@ -210,7 +206,7 @@ always @(posedge clock)
 	       end                                                                       
 	   end                                                                           
 
-	  always @(posedge clock)                                    
+	  always @(posedge clock or posedge reset)                                    
 	  begin                                                                
 	    if (reset)                                           
 	      begin                                                            
@@ -229,7 +225,7 @@ always @(posedge clock)
 	      axi_bready <= axi_bready;                                        
 	  end                                                                  
 	                                                                                                                                  
-    always @(posedge clock)                                                     
+    always @(posedge clock or posedge reset)                                                     
     begin                                                                            
     if (reset)                                                   
         begin                                                                        
@@ -245,7 +241,7 @@ always @(posedge clock)
         end                                                                          
     end                                                                              
                      
-    always @(posedge clock)                                    
+    always @(posedge clock or posedge reset)                                    
     begin                                                                 
     if (reset)                                                                                    
         begin                                                             

@@ -89,7 +89,7 @@ assign o_post_valid =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) 
 assign o_pre_ready  =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
                        1'b1;
 
-always @(posedge clock) begin
+always @(posedge clock or posedge reset) begin
     if(reset) begin
         post_valid <= 1'b0;   
     end
@@ -175,7 +175,6 @@ ysyx_23060124_LSU exu_lsu(
     .M_AXI_BREADY                      (M_AXI_BREADY              ),
     .M_AXI_BID                         (M_AXI_BID                 ),
   //handshake
-    .i_pre_valid                       (i_pre_valid               ),
     .o_pre_ready                       (o_pre_ready               )
 );
 

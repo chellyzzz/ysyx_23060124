@@ -62,7 +62,7 @@ reg                                         idle                       ;
 
 
 // Cache control logic 
-always @(posedge clock)
+always @(posedge clock or negedge rst_n_sync)
 begin
     if(~rst_n_sync) 
         begin
@@ -79,7 +79,7 @@ begin
         cache_valid <= 'b0;
     end
 end
-	  always @(posedge clock)                                       
+	  always @(posedge clock or negedge rst_n_sync)                                       
 	  begin                                                              
 	    if (rst_n_sync == 0)                                          
 	      begin                                                          
@@ -107,7 +107,7 @@ end
     // A new axi_arvalid is asserted when there is a hit read address              
     // available by the master. start_single_read triggers a new read                
     // transaction                                                                   
-    always @(posedge clock)                                                     
+    always @(posedge clock or negedge rst_n_sync)                                                     
     begin                                                                            
     if (rst_n_sync == 0)                                                   
         begin                                                                        
@@ -131,7 +131,7 @@ end
     end                                                                              
 
     // read index
-    always @(posedge clock)                                                     
+    always @(posedge clock or negedge rst_n_sync)                                                     
     begin                                                                            
     if (M_AXI_ARVALID && M_AXI_ARREADY)                                                   
         begin                                                                        
@@ -153,7 +153,7 @@ end
 //While not necessary per spec, it is advisable to reset READY signals in
 //case of differing reset latencies between master/slave.
 
-    always @(posedge clock)                                    
+    always @(posedge clock or negedge rst_n_sync)                                    
     begin                                                                 
     if (rst_n_sync == 0)                                                                                    
         begin                                                             
@@ -178,7 +178,7 @@ wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1:INDEX_BITS]; // ta
 wire [INDEX_BITS-1:0] index = araddr[OFFSET_BITS+INDEX_BITS-OFFSET_BITS-1:0]; // index = M_AXI_ARADDR[4+2:4]
 
 
-always @(posedge clock) begin
+always @(posedge clock or negedge rst_n_sync) begin
     if(M_AXI_RVALID && ~axi_rready) begin
             cache_data [index][read_index] <= M_AXI_RDATA;
         end
@@ -201,7 +201,7 @@ assign hit  =  cache_valid[hit_index] && (cache_tag[hit_index] == hit_tag);
 
 // import "DPI-C" function void cache_miss ();
 
-// always @(posedge clock) begin
+// always @(posedge clock or negedge rst_n_sync) begin
 //  if(!hit && idle) begin
 //     cache_miss();
 //   end

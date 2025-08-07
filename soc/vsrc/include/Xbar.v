@@ -115,7 +115,7 @@ localparam LSU_CLINT    = 3'b001;
 localparam IFU_RAM      = 3'b010;
 localparam LSU_RAM      = 3'b100;
 
-    always @(posedge clock) begin
+    always @(posedge clock or negedge RESETN) begin
         if (RESETN == 1'b0) begin
             state <= IDLE;
         end else begin

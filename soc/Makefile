@@ -90,7 +90,8 @@ run: compile
 	$(BUILD_DIR)/$(VNAME) $(NPC_FLAGS)
 
 check:
-	$(VERILATOR) $(VERILATOR_CHECK) $(VSRCS)
+	$(VERILATOR) $(VERILATOR_CHECK) $(VSRCS) > check.txt 2>&1
+	
 wave:
 	gtkwave $(BUILD_DIR)/wave.vcd
 

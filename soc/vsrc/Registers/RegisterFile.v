@@ -11,9 +11,6 @@ module ysyx_23060124_RegisterFile (
     input              [   3:0]         wbu_rd                     ,
     input              [  31:0]         wbu_wdata                  ,
     input                               wbu_wen                    ,
-    //
-    input                               idu_wen                    ,
-    input              [   3:0]         idu_waddr                  ,
     // 
     input              [   3:0]         raddr1                     ,
     input              [   3:0]         raddr2                     ,
@@ -35,8 +32,13 @@ endgenerate
 
 assign rf[0] = 32'b0;
 
-always @(posedge  clock) begin
-  if (wen && waddr != 0) begin
+always @(posedge clock or posedge reset) begin
+  if (reset) begin
+    integer j;
+    for (j = 1; j < 16; j = j + 1) begin
+      regfile[j] <= 32'b0;
+    end
+  end else if (wen && waddr != 0) begin
     regfile[waddr[3:0]] <= wdata;
   end
 end

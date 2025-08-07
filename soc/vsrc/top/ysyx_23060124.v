@@ -84,7 +84,8 @@ wire                   [ISA_WIDTH-1:0]  exu_res                    ;
 wire                                    exu_brch                   ;
 //mret ecall
 wire                   [ISA_WIDTH-1:0]  csr_rs2                    ;
-wire                   [ISA_WIDTH-1:0]  mcause, mstatus, mepc, mtvec;
+// wire                   [ISA_WIDTH-1:0]  mcause, mstatus            ;
+wire                   [ISA_WIDTH-1:0]  mepc, mtvec;
 
 //load store
 wire                   [3-1:0]          exu_opt                    ;
@@ -103,8 +104,6 @@ wire                                    ifu2idu_valid, idu2ifu_ready;
 wire                                    idu2exu_valid, exu2idu_ready;
 wire                                    exu2wbu_valid, wbu2exu_ready;
 //cache 
-wire                                    mem_valid                  ;
-wire                                    ifu2cache_req              ;
 wire                   [ISA_WIDTH-1:0]  icache_ins                 ;
 wire                   [ISA_WIDTH-1:0]  ifu_req_addr               ;
 wire                                    icache_hit                 ;
@@ -191,10 +190,7 @@ ysyx_23060124_RegisterFile regfile1(
     .raddr1                            (idu_addr_rs1              ),
     .raddr2                            (idu_addr_rs2              ),
     .rdata1                            (rs1                       ),
-    .rdata2                            (rs2                       ),
-        //scoreboard
-    .idu_wen                           (idu_wen                   ),
-    .idu_waddr                         (idu_addr_rd               )
+    .rdata2                            (rs2                       )
 );
 
 ysyx_23060124_CSR_RegisterFile Csrs(
@@ -699,4 +695,3 @@ CLINT clint
 // end
 
 endmodule
-

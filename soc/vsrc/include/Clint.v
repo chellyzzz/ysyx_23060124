@@ -29,7 +29,7 @@ assign S_AXI_RVALID     = 1'b1;
 assign S_AXI_RLAST      = 1'b1;
 assign S_AXI_RID        = 4'b0;
 
-always @(posedge clock) begin
+always @(posedge clock or posedge reset) begin
     if (reset) begin
         axi_raddr <= 1'b0;
     end
@@ -57,7 +57,7 @@ module Reg #( parameter WIDTH = 1,
   input [WIDTH-1:0] din,
   output reg [WIDTH-1:0] dout
 );
-  always @(posedge clk) begin
+  always @(posedge clk or posedge rst) begin
     if (rst) dout <= RESET_VAL;
     else dout <= din;
   end
