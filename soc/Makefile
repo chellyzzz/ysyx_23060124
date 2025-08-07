@@ -98,7 +98,7 @@ menuconfig:
 sim: run wave
 
 combined :
-	find ./vsrc -type f -name "*.v" | sort | xargs cat > ./combined.v
+	find ./vsrc -type f -name "*.v" | sort | xargs cat > ./ysyx_23060124.v
 
 clean:
 	rm -rf $(BUILD_DIR)

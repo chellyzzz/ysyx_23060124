@@ -466,7 +466,7 @@ module ysyx_23060124_exu_wbu_regs (
     output reg                          o_ebreak                   ,
     //
     output reg         [  31:0]         o_res                      ,
-    output reg                          o_next                     ,
+    // output reg                          o_next                     ,
     input                               i_post_ready               ,
     input                               o_post_valid                
 );
@@ -485,7 +485,7 @@ always @(posedge clock or posedge reset) begin
         o_ecall     <= 'b0;  
         o_res       <= 'b0; 
         o_ebreak    <= 'b0;
-        o_next      <= 'b0;
+        // o_next      <= 'b0;
     end
     else if(i_post_ready && o_post_valid) begin
         o_pc_next   <= i_pc_next;
@@ -500,7 +500,7 @@ always @(posedge clock or posedge reset) begin
         o_ecall     <= i_ecall;
         o_res       <= i_res;
         o_ebreak    <= i_ebreak;
-        o_next      <= 1'b1;
+        // o_next      <= 1'b1;
     end
     else if(i_post_ready && ~o_post_valid) begin
         o_pc_next   <= 'b0; 
@@ -515,7 +515,7 @@ always @(posedge clock or posedge reset) begin
         o_ecall     <= 'b0; 
         o_res       <= 'b0; 
         o_ebreak    <= 'b0;
-        o_next      <= 'b0;
+        // o_next      <= 'b0;
     end
 end
 endmodule   module ysyx_23060124_LSU
@@ -1962,7 +1962,7 @@ ysyx_23060124__icache icache1(
     .addr                              (ifu_req_addr              ),
     .data                              (icache_ins                ),
     .hit                               (icache_hit                ),
-    .fence_i                           (fence_i                   ),
+    .fence_i                           (idu2exu_fence_i           ),
   //read data channel
     .M_AXI_RDATA                       (IFU_SRAM_AXI_RDATA        ),
     .M_AXI_RRESP                       (IFU_SRAM_AXI_RRESP        ),
@@ -2202,7 +2202,7 @@ wire                                    exu2wbu_mret               ;
 wire                                    exu2wbu_ecall              ;
 wire                   [  31:0]         exu2wbu_res                ;
 wire                                    exu2wbu_ebreak             ;
-wire                                    exu2wbu_next               ;
+// wire                                    exu2wbu_next               ;
 
 ysyx_23060124_exu_wbu_regs exu_wbu_regs (
     .clock                             (clock                     ),
@@ -2232,7 +2232,7 @@ ysyx_23060124_exu_wbu_regs exu_wbu_regs (
     .o_ecall                           (exu2wbu_ecall             ),
     .o_res                             (exu2wbu_res               ),
     .o_ebreak                          (exu2wbu_ebreak            ),
-    .o_next                            (exu2wbu_next              ),
+    // .o_next                            (exu2wbu_next              ),
     .i_post_ready                      (wbu2exu_ready             ),
     .o_post_valid                      (exu2wbu_valid             ) 
 );
@@ -2242,7 +2242,7 @@ ysyx_23060124_WBU wbu1(
     .reset                             (reset                     ),
     .i_pc_next                         (exu2wbu_pc_next           ),
     .i_pre_valid                       (exu2wbu_valid             ),
-    .i_next                            (exu2wbu_next              ),
+    // .i_next                            (exu2wbu_next              ),
 
     .i_rd_addr                         (exu2wbu_rd_addr           ),
     .i_csr_addr                        (exu2wbu_csr_addr          ),
@@ -2456,7 +2456,7 @@ module ysyx_23060124_WBU (
     input                               i_mret                     ,
     input                               i_ecall                    ,
     input              [  31:0]         i_pc_next                  ,
-    input                               i_next                     ,
+    // input                               i_next                     ,
   // ecall and mret
 
     input              [  31:0]         i_res                      ,
@@ -2507,13 +2507,13 @@ always @(posedge clock or posedge reset) begin
   end
 end
 
-reg diff;
-always @(posedge clock)begin
-  if(reset) begin
-    diff <= 1'b0;
-  end
-  // else diff <= i_next && ((i_res != 32'b0) || (i_rd_addr != 4'b0) || (i_wen != 1'b0) || (i_jal || i_jalr || i_brch || i_ecall || i_mret) != 0);
-  else diff <= i_next;
-end
+// reg diff;
+// always @(posedge clock)begin
+//   if(reset) begin
+//     diff <= 1'b0;
+//   end
+//   // else diff <= i_next && ((i_res != 32'b0) || (i_rd_addr != 4'b0) || (i_wen != 1'b0) || (i_jal || i_jalr || i_brch || i_ecall || i_mret) != 0);
+//   else diff <= i_next;
+// end
 
 endmodule
