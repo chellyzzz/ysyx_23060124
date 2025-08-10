@@ -38,6 +38,10 @@ localparam                              INDEX_BITS = $clog2(WAY_NUMS);//index = 
 localparam                              OFFSET_BITS = $clog2(BLOCK_SIZE);//offset = log2(BLOCK_SIZE) = 5 = m
 localparam                              TAG_BITS = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;//tag = 32 - 5  -1 = 26
 
+reg                    [DATA_WIDTH-1:0] cache_data  [WAY_NUMS-1:0][BYTES_NUMS-1:0]                           ;
+reg                    [TAG_BITS-1:0]   cache_tag   [WAY_NUMS-1:0]                           ;
+reg                    [WAY_NUMS-1:0]   cache_valid                ;
+
 // AXI
 /******************************regs*****************************/
     // Initiate AXI transactions
@@ -51,14 +55,17 @@ reg                                         idle                       ;
     // AXI active low reset signal
 /******************************combinational logic*****************************/
         
-    assign M_AXI_ARADDR = {araddr, {OFFSET_BITS{1'b0}}};
-    // assign M_AXI_ARADDR     = addr;
-    assign M_AXI_ARVALID    = axi_arvalid;
-    assign M_AXI_ARID       = 'b0;
-    assign M_AXI_ARLEN      = ARLEN;
-    assign M_AXI_ARSIZE     = 3'b010;
-    assign M_AXI_ARBURST    = 2'b01; //incrementing burst
-    assign M_AXI_RREADY     = axi_rready; 
+assign M_AXI_ARADDR = {araddr, {OFFSET_BITS{1'b0}}};
+// assign M_AXI_ARADDR     = addr;
+assign M_AXI_ARVALID    = axi_arvalid;
+assign M_AXI_ARID       = 'b0;
+assign M_AXI_ARLEN      = ARLEN;
+assign M_AXI_ARSIZE     = 3'b010;
+assign M_AXI_ARBURST    = 2'b01; //incrementing burst
+assign M_AXI_RREADY     = axi_rready; 
+
+wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1:INDEX_BITS]; // tag = M_AXI_ARADDR[31:6]
+wire [INDEX_BITS-1:0] index = araddr[OFFSET_BITS+INDEX_BITS-OFFSET_BITS-1:0]; // index = M_AXI_ARADDR[4+2:4]
 
 
 // Cache control logic 
@@ -170,13 +177,6 @@ end
         end                                                                                                      
     end 
 
-reg                    [DATA_WIDTH-1:0] cache_data  [WAY_NUMS-1:0][BYTES_NUMS-1:0]                           ;
-reg                    [TAG_BITS-1:0]   cache_tag   [WAY_NUMS-1:0]                           ;
-reg                    [WAY_NUMS-1:0]   cache_valid                ;
-
-wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1:INDEX_BITS]; // tag = M_AXI_ARADDR[31:6]
-wire [INDEX_BITS-1:0] index = araddr[OFFSET_BITS+INDEX_BITS-OFFSET_BITS-1:0]; // index = M_AXI_ARADDR[4+2:4]
-
 
 always @(posedge clock or negedge rst_n_sync) begin
     if(M_AXI_RVALID && ~axi_rready) begin
@@ -185,12 +185,12 @@ always @(posedge clock or negedge rst_n_sync) begin
 end
 
 
-//TODO: hit_tag
-assign data = cache_data[hit_index][hit_offset[OFFSET_BITS-1:2]];
-
 wire                   [TAG_BITS-1:0]   hit_tag                    ;
 wire                   [INDEX_BITS-1:0] hit_index                  ;
 wire                   [OFFSET_BITS-1:0]hit_offset                 ;
+
+//TODO: hit_tag
+assign data = cache_data[hit_index][hit_offset[OFFSET_BITS-1:2]];
 
 assign hit_tag    = addr[ADDR_WIDTH-1               : INDEX_BITS+OFFSET_BITS];
 assign hit_index  = addr[OFFSET_BITS+INDEX_BITS-1   : OFFSET_BITS];

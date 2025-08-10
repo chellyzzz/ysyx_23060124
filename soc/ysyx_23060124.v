@@ -26,7 +26,7 @@ reg [12:0] mstatus;
 reg [31:0] mepc;
 reg [31:0] mtvec;
 
-always @(posedge  clock) begin
+always @(posedge  clock or posedge reset) begin
     if(reset) begin
         mstatus <= 13'b0;
         mepc <= 32'b0;
@@ -98,9 +98,6 @@ module ysyx_23060124_RegisterFile (
     input              [   3:0]         wbu_rd                     ,
     input              [  31:0]         wbu_wdata                  ,
     input                               wbu_wen                    ,
-    //
-    input                               idu_wen                    ,
-    input              [   3:0]         idu_waddr                  ,
     // 
     input              [   3:0]         raddr1                     ,
     input              [   3:0]         raddr2                     ,
@@ -122,8 +119,13 @@ endgenerate
 
 assign rf[0] = 32'b0;
 
-always @(posedge  clock) begin
-  if (wen && waddr != 0) begin
+always @(posedge clock or posedge reset) begin
+  if (reset) begin
+    integer j;
+    for (j = 1; j < 16; j = j + 1) begin
+      regfile[j] <= 32'b0;
+    end
+  end else if (wen && waddr != 0) begin
     regfile[waddr[3:0]] <= wdata;
   end
 end
@@ -147,26 +149,26 @@ module ysyx_23060124_ALU (
 );
 
 /***************parameter***************/
-parameter ADD =  4'b0000;
-parameter SUB =  4'b1000;
-parameter SLL =  4'b0001;
-parameter SLT =  4'b0010;
-parameter SLTU=  4'b0011;
-parameter XOR =  4'b0100;
-parameter SRL =  4'b0101;
-parameter OR  =  4'b0110;
-parameter AND =  4'b0111;
+// parameter ADD =  4'b0000;
+// parameter SUB =  4'b1000;
+// parameter SLL =  4'b0001;
+// parameter SLT =  4'b0010;
+// parameter SLTU=  4'b0011;
+// parameter XOR =  4'b0100;
+// parameter SRL =  4'b0101;
+// parameter OR  =  4'b0110;
+// parameter AND =  4'b0111;
 
-localparam                              ALU_ADD         =  10'd1   ;
-localparam                              ALU_SUB         =  10'd2   ;
-localparam                              ALU_SLL         =  10'd4   ;
-localparam                              ALU_SLT         =  10'd8   ;
-localparam                              ALU_SLTU        =  10'd16  ;
-localparam                              ALU_XOR         =  10'd32  ;
-localparam                              ALU_SRL         =  10'd64  ;
-localparam                              ALU_OR          =  10'd128 ;
-localparam                              ALU_AND         =  10'd256 ;
-localparam                              ALU_SRA         =  10'd512  ;
+// localparam                              ALU_ADD         =  10'd1   ;
+// localparam                              ALU_SUB         =  10'd2   ;
+// localparam                              ALU_SLL         =  10'd4   ;
+// localparam                              ALU_SLT         =  10'd8   ;
+// localparam                              ALU_SLTU        =  10'd16  ;
+// localparam                              ALU_XOR         =  10'd32  ;
+// localparam                              ALU_SRL         =  10'd64  ;
+// localparam                              ALU_OR          =  10'd128 ;
+// localparam                              ALU_AND         =  10'd256 ;
+// localparam                              ALU_SRA         =  10'd512  ;
 
 wire                   [  31:0]         add_res                    ;
 wire                   [  31:0]         and_res                    ;
@@ -321,7 +323,7 @@ assign o_post_valid =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) 
 assign o_pre_ready  =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
                        1'b1;
 
-always @(posedge clock) begin
+always @(posedge clock or posedge reset) begin
     if(reset) begin
         post_valid <= 1'b0;   
     end
@@ -407,7 +409,6 @@ ysyx_23060124_LSU exu_lsu(
     .M_AXI_BREADY                      (M_AXI_BREADY              ),
     .M_AXI_BID                         (M_AXI_BID                 ),
   //handshake
-    .i_pre_valid                       (i_pre_valid               ),
     .o_pre_ready                       (o_pre_ready               )
 );
 
@@ -518,7 +519,8 @@ always @(posedge clock or posedge reset) begin
         // o_next      <= 'b0;
     end
 end
-endmodule   module ysyx_23060124_LSU
+endmodule   
+module ysyx_23060124_LSU
 (
     input                               clock                      ,
     input                               reset                     ,
@@ -569,8 +571,7 @@ endmodule   module ysyx_23060124_LSU
     output                              M_AXI_BREADY               ,
     input              [   3:0]         M_AXI_BID                  ,
   //lsu -> wbu handshake
-    input                               o_pre_ready                ,
-    input                               i_pre_valid                
+    input                               o_pre_ready                
 );
 /************parameter************/
 //exu_opt
@@ -598,7 +599,6 @@ reg                    [  31:0]         axi_axaddr                 ;
 
 reg                                     init_txn_ff                ;
 reg                                     init_txn_ff2               ;
-reg                                     init_txn_edge              ;
 reg                                     o_pre_ready_d1             ;
 
 wire                                    init_txn_pulse             ;
@@ -652,9 +652,7 @@ assign is_ls = i_load  || i_store;
 assign txn_pulse_load   = i_load  && init_txn_pulse;
 assign txn_pulse_store  = i_store && init_txn_pulse;  
 
-reg idle;
-
-always @(posedge clock)begin
+always @(posedge clock or posedge reset)begin
     if(reset)begin
       o_pre_ready_d1 <= 1'b0; 
     end
@@ -663,7 +661,7 @@ always @(posedge clock)begin
     end
 end
 
-always @(posedge clock)										      
+always @(posedge clock or posedge reset)										      
     begin                                                                        
     if (reset)                                                   
         begin                                                                    
@@ -680,7 +678,7 @@ always @(posedge clock)
         end                                                                      
     end     
 
-  // always @(posedge clock)										      
+  // always @(posedge clock or posedge reset)										      
   //   begin                                                                        
   //   if (reset)                                                   
   //       begin                                                                    
@@ -695,7 +693,7 @@ always @(posedge clock)
   //   else idle <= idle;                                                
   //   end     
 
-	  always @(posedge clock)										      
+	  always @(posedge clock or posedge reset)										      
 	  begin                                                                         
 	    if (reset)                                                   
 	      begin                                                                    
@@ -714,7 +712,7 @@ always @(posedge clock)
 	      end                                                                      
 	  end      
 
-	   always @(posedge clock)                                        
+	   always @(posedge clock or posedge reset)                                        
 	   begin                                                                         
 	     if (reset)                                                    
 	       begin                                                                     
@@ -730,7 +728,7 @@ always @(posedge clock)
 	       end                                                                       
 	   end                                                                           
 
-	  always @(posedge clock)                                    
+	  always @(posedge clock or posedge reset)                                    
 	  begin                                                                
 	    if (reset)                                           
 	      begin                                                            
@@ -749,7 +747,7 @@ always @(posedge clock)
 	      axi_bready <= axi_bready;                                        
 	  end                                                                  
 	                                                                                                                                  
-    always @(posedge clock)                                                     
+    always @(posedge clock or posedge reset)                                                     
     begin                                                                            
     if (reset)                                                   
         begin                                                                        
@@ -765,7 +763,7 @@ always @(posedge clock)
         end                                                                          
     end                                                                              
                      
-    always @(posedge clock)                                    
+    always @(posedge clock or posedge reset)                                    
     begin                                                                 
     if (reset)                                                                                    
         begin                                                             
@@ -1169,7 +1167,8 @@ end
 //   end
 // end
 
-endmodule   module ysyx_23060124__icache #(
+endmodule   
+module ysyx_23060124__icache #(
     parameter                           ADDR_WIDTH = 32            ,
     parameter                           DATA_WIDTH = 32            ,
     parameter                           CACHE_SIZE = 16            ,// Number of cache blocks 
@@ -1209,6 +1208,10 @@ localparam                              INDEX_BITS = $clog2(WAY_NUMS);//index = 
 localparam                              OFFSET_BITS = $clog2(BLOCK_SIZE);//offset = log2(BLOCK_SIZE) = 5 = m
 localparam                              TAG_BITS = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;//tag = 32 - 5  -1 = 26
 
+reg                    [DATA_WIDTH-1:0] cache_data  [WAY_NUMS-1:0][BYTES_NUMS-1:0]                           ;
+reg                    [TAG_BITS-1:0]   cache_tag   [WAY_NUMS-1:0]                           ;
+reg                    [WAY_NUMS-1:0]   cache_valid                ;
+
 // AXI
 /******************************regs*****************************/
     // Initiate AXI transactions
@@ -1222,18 +1225,21 @@ reg                                         idle                       ;
     // AXI active low reset signal
 /******************************combinational logic*****************************/
         
-    assign M_AXI_ARADDR = {araddr, {OFFSET_BITS{1'b0}}};
-    // assign M_AXI_ARADDR     = addr;
-    assign M_AXI_ARVALID    = axi_arvalid;
-    assign M_AXI_ARID       = 'b0;
-    assign M_AXI_ARLEN      = ARLEN;
-    assign M_AXI_ARSIZE     = 3'b010;
-    assign M_AXI_ARBURST    = 2'b01; //incrementing burst
-    assign M_AXI_RREADY     = axi_rready; 
+assign M_AXI_ARADDR = {araddr, {OFFSET_BITS{1'b0}}};
+// assign M_AXI_ARADDR     = addr;
+assign M_AXI_ARVALID    = axi_arvalid;
+assign M_AXI_ARID       = 'b0;
+assign M_AXI_ARLEN      = ARLEN;
+assign M_AXI_ARSIZE     = 3'b010;
+assign M_AXI_ARBURST    = 2'b01; //incrementing burst
+assign M_AXI_RREADY     = axi_rready; 
+
+wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1:INDEX_BITS]; // tag = M_AXI_ARADDR[31:6]
+wire [INDEX_BITS-1:0] index = araddr[OFFSET_BITS+INDEX_BITS-OFFSET_BITS-1:0]; // index = M_AXI_ARADDR[4+2:4]
 
 
 // Cache control logic 
-always @(posedge clock)
+always @(posedge clock or negedge rst_n_sync)
 begin
     if(~rst_n_sync) 
         begin
@@ -1250,7 +1256,7 @@ begin
         cache_valid <= 'b0;
     end
 end
-	  always @(posedge clock)                                       
+	  always @(posedge clock or negedge rst_n_sync)                                       
 	  begin                                                              
 	    if (rst_n_sync == 0)                                          
 	      begin                                                          
@@ -1278,7 +1284,7 @@ end
     // A new axi_arvalid is asserted when there is a hit read address              
     // available by the master. start_single_read triggers a new read                
     // transaction                                                                   
-    always @(posedge clock)                                                     
+    always @(posedge clock or negedge rst_n_sync)                                                     
     begin                                                                            
     if (rst_n_sync == 0)                                                   
         begin                                                                        
@@ -1302,7 +1308,7 @@ end
     end                                                                              
 
     // read index
-    always @(posedge clock)                                                     
+    always @(posedge clock or negedge rst_n_sync)                                                     
     begin                                                                            
     if (M_AXI_ARVALID && M_AXI_ARREADY)                                                   
         begin                                                                        
@@ -1324,7 +1330,7 @@ end
 //While not necessary per spec, it is advisable to reset READY signals in
 //case of differing reset latencies between master/slave.
 
-    always @(posedge clock)                                    
+    always @(posedge clock or negedge rst_n_sync)                                    
     begin                                                                 
     if (rst_n_sync == 0)                                                                                    
         begin                                                             
@@ -1341,27 +1347,20 @@ end
         end                                                                                                      
     end 
 
-reg                    [DATA_WIDTH-1:0] cache_data  [WAY_NUMS-1:0][BYTES_NUMS-1:0]                           ;
-reg                    [TAG_BITS-1:0]   cache_tag   [WAY_NUMS-1:0]                           ;
-reg                    [WAY_NUMS-1:0]   cache_valid                ;
 
-wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1:INDEX_BITS]; // tag = M_AXI_ARADDR[31:6]
-wire [INDEX_BITS-1:0] index = araddr[OFFSET_BITS+INDEX_BITS-OFFSET_BITS-1:0]; // index = M_AXI_ARADDR[4+2:4]
-
-
-always @(posedge clock) begin
+always @(posedge clock or negedge rst_n_sync) begin
     if(M_AXI_RVALID && ~axi_rready) begin
             cache_data [index][read_index] <= M_AXI_RDATA;
         end
 end
 
 
-//TODO: hit_tag
-assign data = cache_data[hit_index][hit_offset[OFFSET_BITS-1:2]];
-
 wire                   [TAG_BITS-1:0]   hit_tag                    ;
 wire                   [INDEX_BITS-1:0] hit_index                  ;
 wire                   [OFFSET_BITS-1:0]hit_offset                 ;
+
+//TODO: hit_tag
+assign data = cache_data[hit_index][hit_offset[OFFSET_BITS-1:2]];
 
 assign hit_tag    = addr[ADDR_WIDTH-1               : INDEX_BITS+OFFSET_BITS];
 assign hit_index  = addr[OFFSET_BITS+INDEX_BITS-1   : OFFSET_BITS];
@@ -1372,7 +1371,7 @@ assign hit  =  cache_valid[hit_index] && (cache_tag[hit_index] == hit_tag);
 
 // import "DPI-C" function void cache_miss ();
 
-// always @(posedge clock) begin
+// always @(posedge clock or negedge rst_n_sync) begin
 //  if(!hit && idle) begin
 //     cache_miss();
 //   end
@@ -1458,7 +1457,8 @@ always @(posedge clock or posedge reset) begin
     end
 end
 
-endmodule   module CLINT(
+endmodule   
+module CLINT(
     input                               clock                      ,
     input                               reset                      ,
     //read data channel
@@ -1489,7 +1489,7 @@ assign S_AXI_RVALID     = 1'b1;
 assign S_AXI_RLAST      = 1'b1;
 assign S_AXI_RID        = 4'b0;
 
-always @(posedge clock) begin
+always @(posedge clock or posedge reset) begin
     if (reset) begin
         axi_raddr <= 1'b0;
     end
@@ -1517,7 +1517,7 @@ module Reg #( parameter WIDTH = 1,
   input [WIDTH-1:0] din,
   output reg [WIDTH-1:0] dout
 );
-  always @(posedge clk) begin
+  always @(posedge clk or posedge rst) begin
     if (rst) dout <= RESET_VAL;
     else dout <= din;
   end
@@ -1657,7 +1657,7 @@ localparam LSU_CLINT    = 3'b001;
 localparam IFU_RAM      = 3'b010;
 localparam LSU_RAM      = 3'b100;
 
-    always @(posedge clock) begin
+    always @(posedge clock or negedge RESETN) begin
         if (RESETN == 1'b0) begin
             state <= IDLE;
         end else begin
@@ -1825,7 +1825,8 @@ wire                   [ISA_WIDTH-1:0]  exu_res                    ;
 wire                                    exu_brch                   ;
 //mret ecall
 wire                   [ISA_WIDTH-1:0]  csr_rs2                    ;
-wire                   [ISA_WIDTH-1:0]  mcause, mstatus, mepc, mtvec;
+// wire                   [ISA_WIDTH-1:0]  mcause, mstatus            ;
+wire                   [ISA_WIDTH-1:0]  mepc, mtvec;
 
 //load store
 wire                   [3-1:0]          exu_opt                    ;
@@ -1844,8 +1845,6 @@ wire                                    ifu2idu_valid, idu2ifu_ready;
 wire                                    idu2exu_valid, exu2idu_ready;
 wire                                    exu2wbu_valid, wbu2exu_ready;
 //cache 
-wire                                    mem_valid                  ;
-wire                                    ifu2cache_req              ;
 wire                   [ISA_WIDTH-1:0]  icache_ins                 ;
 wire                   [ISA_WIDTH-1:0]  ifu_req_addr               ;
 wire                                    icache_hit                 ;
@@ -1914,29 +1913,8 @@ ysyx_23060124_stdrst u_stdrst(
 
 wire                   [   3:0]         wbu_rd_addr                ;
 wire                   [  11:0]         wbu_csr_addr               ;
-
-ysyx_23060124_RegisterFile regfile1(
-    .clock                             (clock                     ),
-    .reset                             (reset                     ),
-    .waddr                             (wbu_rd_addr               ),
-    .wdata                             (wbu_rd_wdata              ),
-    .wen                               (wbu_wen                   ),
-//
-    .exu_rd                            (idu2exu_rd                ),
-    .exu_wdata                         (exu_res                   ),
-    .exu_wen                           (idu2exu_wen               ),
-    .wbu_rd                            (exu2wbu_rd_addr           ),
-    .wbu_wdata                         (exu2wbu_res               ),
-    .wbu_wen                           (exu2wbu_wen               ),
-//
-    .raddr1                            (idu_addr_rs1              ),
-    .raddr2                            (idu_addr_rs2              ),
-    .rdata1                            (rs1                       ),
-    .rdata2                            (rs2                       ),
-        //scoreboard
-    .idu_wen                           (idu_wen                   ),
-    .idu_waddr                         (idu_addr_rd               )
-);
+wire [31:0] ifu2idu_ins;
+wire [31:0] ifu2idu_pc;
 
 ysyx_23060124_CSR_RegisterFile Csrs(
     .clock                             (clock                     ),
@@ -1956,6 +1934,29 @@ ysyx_23060124_CSR_RegisterFile Csrs(
     .o_mtvec                           (mtvec                     ) 
 );
   
+
+wire                   [  31:0]         idu2exu_pc                 ;
+wire                   [  31:0]         idu2exu_src1               ;
+wire                   [  31:0]         idu2exu_src2               ;
+wire                   [  31:0]         idu2exu_imm                ;
+wire                   [   1:0]         idu2exu_src_sel1           ;
+wire                   [   2:0]         idu2exu_src_sel2           ;
+wire                   [   3:0]         idu2exu_rd                 ;
+wire                   [   2:0]         idu2exu_exu_opt            ;
+wire                   [   9:0]         idu2exu_alu_opt            ;
+wire                                    idu2exu_wen                ;
+wire                                    idu2exu_csr_wen            ;
+wire                                    idu2exu_mret               ;
+wire                                    idu2exu_ecall              ;
+wire                                    idu2exu_load               ;
+wire                                    idu2exu_store              ;
+wire                                    idu2exu_brch               ;
+wire                                    idu2exu_jal                ;
+wire                                    idu2exu_jalr               ;
+wire                                    idu2exu_ebreak             ;
+wire                                    idu2exu_fence_i            ;
+wire                   [  11:0]         idu2exu_csr_addr           ;
+
 ysyx_23060124__icache icache1(
     .clock                             (clock                     ),
     .rst_n_sync                        (rst_n_sync                ),
@@ -1979,10 +1980,6 @@ ysyx_23060124__icache icache1(
     .M_AXI_ARSIZE                      (IFU_SRAM_AXI_ARSIZE       ),
     .M_AXI_ARBURST                     (IFU_SRAM_AXI_ARBURST      )
 );
-
-
-wire [31:0] ifu2idu_ins;
-wire [31:0] ifu2idu_pc;
 
 ysyx_23060124_IFU ifu1
 (
@@ -2041,27 +2038,6 @@ ysyx_23060124_IDU idu1(
     .o_fence_i                         (fence_i                   )
 );
 
-wire                   [  31:0]         idu2exu_pc                 ;
-wire                   [  31:0]         idu2exu_src1               ;
-wire                   [  31:0]         idu2exu_src2               ;
-wire                   [  31:0]         idu2exu_imm                ;
-wire                   [   1:0]         idu2exu_src_sel1           ;
-wire                   [   2:0]         idu2exu_src_sel2           ;
-wire                   [   3:0]         idu2exu_rd                 ;
-wire                   [   2:0]         idu2exu_exu_opt            ;
-wire                   [   9:0]         idu2exu_alu_opt            ;
-wire                                    idu2exu_wen                ;
-wire                                    idu2exu_csr_wen            ;
-wire                                    idu2exu_mret               ;
-wire                                    idu2exu_ecall              ;
-wire                                    idu2exu_load               ;
-wire                                    idu2exu_store              ;
-wire                                    idu2exu_brch               ;
-wire                                    idu2exu_jal                ;
-wire                                    idu2exu_jalr               ;
-wire                                    idu2exu_ebreak             ;
-wire                                    idu2exu_fence_i            ;
-wire                   [  11:0]         idu2exu_csr_addr           ;
 
 ysyx_23060124_idu_exu_regs idu2exu_regs(
     .clock                             (clock                     ),
@@ -2366,6 +2342,25 @@ ysyx_23060124_Xbar xbar
     .SRAM_RID                          (io_master_rid             ) 
 );
 
+ysyx_23060124_RegisterFile regfile1(
+    .clock                             (clock                     ),
+    .reset                             (reset                     ),
+    .waddr                             (wbu_rd_addr               ),
+    .wdata                             (wbu_rd_wdata              ),
+    .wen                               (wbu_wen                   ),
+//
+    .exu_rd                            (idu2exu_rd                ),
+    .exu_wdata                         (exu_res                   ),
+    .exu_wen                           (idu2exu_wen               ),
+    .wbu_rd                            (exu2wbu_rd_addr           ),
+    .wbu_wdata                         (exu2wbu_res               ),
+    .wbu_wen                           (exu2wbu_wen               ),
+//
+    .raddr1                            (idu_addr_rs1              ),
+    .raddr2                            (idu_addr_rs2              ),
+    .rdata1                            (rs1                       ),
+    .rdata2                            (rs2                       )
+);
 
 CLINT clint
 (
@@ -2440,7 +2435,6 @@ CLINT clint
 // end
 
 endmodule
-
 module ysyx_23060124_WBU (
     input                               clock                      ,
     input                               reset                      ,
