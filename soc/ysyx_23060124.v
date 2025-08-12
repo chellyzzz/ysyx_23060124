@@ -333,19 +333,40 @@ end
 reg                  [  31:0]         alu_src1                   ;
 reg                  [  31:0]         alu_src2                   ;
 
-always_comb begin
-    unique case(1'b1)
-        i_src_sel1[0]:  alu_src1 = i_src1;
-        default: alu_src1 = i_pc;
+// always_comb begin
+//     unique case(1'b1)
+//         i_src_sel1[0]:  alu_src1 = i_src1;
+//         default: alu_src1 = i_pc;
+//     endcase
+// end
+
+// always_comb begin
+//     unique case(1'b1)
+//         i_src_sel2[0]:  alu_src2 = i_src2;
+//         i_src_sel2[1]:  alu_src2 = i_imm;
+//         i_src_sel2[2]:  alu_src2 = 32'h4;
+//         default: alu_src2 = 32'h0;
+//     endcase
+// end
+
+wire src_sel1_0 = i_src_sel1[0];
+wire src_sel2_0 = i_src_sel2[0];
+wire src_sel2_1 = i_src_sel2[1];
+wire src_sel2_2 = i_src_sel2[2];
+
+always @(*) begin
+    unique case (1'b1)
+        src_sel1_0:  alu_src1 = i_src1;
+        default:     alu_src1 = i_pc;
     endcase
 end
 
-always_comb begin
-    unique case(1'b1)
-        i_src_sel2[0]:  alu_src2 = i_src2;
-        i_src_sel2[1]:  alu_src2 = i_imm;
-        i_src_sel2[2]:  alu_src2 = 32'h4;
-        default: alu_src2 = 32'h0;
+always @(*) begin
+    unique case (1'b1)
+        src_sel2_0:  alu_src2 = i_src2;
+        src_sel2_1:  alu_src2 = i_imm;
+        src_sel2_2:  alu_src2 = 32'h4;
+        default:     alu_src2 = 32'h0;
     endcase
 end
 
