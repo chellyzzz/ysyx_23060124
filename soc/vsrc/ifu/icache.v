@@ -139,8 +139,11 @@ end
 
     // read index
     always @(posedge clock or negedge rst_n_sync)                                                     
-    begin                                                                            
-    if (M_AXI_ARVALID && M_AXI_ARREADY)                                                   
+    begin          
+    if(rst_n_sync == 0) begin
+        read_index <= 'b0;    
+    end
+    else if (M_AXI_ARVALID && M_AXI_ARREADY)                                                   
         begin                                                                        
         read_index <= 'b0;                                                       
         end                                                                          
@@ -177,13 +180,18 @@ end
         end                                                                                                      
     end 
 
-
+integer i, j;
 always @(posedge clock or negedge rst_n_sync) begin
-    if(M_AXI_RVALID && ~axi_rready) begin
-            cache_data [index][read_index] <= M_AXI_RDATA;
+    if (!rst_n_sync) begin
+        for (i = 0; i < WAY_NUMS; i = i + 1) begin
+            for (j = 0; j < BYTES_NUMS; j = j + 1) begin
+                cache_data[i][j] <= 32'b0;
+            end
         end
+    end else if (M_AXI_RVALID && ~axi_rready) begin
+        cache_data[index][read_index] <= M_AXI_RDATA;
+    end
 end
-
 
 wire                   [TAG_BITS-1:0]   hit_tag                    ;
 wire                   [INDEX_BITS-1:0] hit_index                  ;

@@ -93,7 +93,7 @@ always @(posedge clock or posedge reset) begin
     if(reset) begin
         post_valid <= 1'b0;   
     end
-    post_valid <= i_pre_valid;
+    else post_valid <= i_pre_valid;
 end
 
 reg                  [  31:0]         alu_src1                   ;
