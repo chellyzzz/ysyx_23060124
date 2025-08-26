@@ -21,8 +21,16 @@
 void init_rand();
 void init_log(const char *log_file);
 void init_mem();
+void init_flash();
+void init_sram();
 void init_difftest(char *ref_so_file, long img_size, int port);
+
+#ifdef CONFIG_DEVICE
 void init_device();
+#else 
+void init_device() {}; // do nothing
+#endif
+
 void init_sdb();
 void init_disasm(const char *triple);
 int sdb_mainloop();
@@ -50,11 +58,11 @@ static int difftest_port = 1234;
 static char *elf_file = NULL;
 
 static long load_img() {
+
   if (img_file == NULL) {
     Log("No image is given. Use the default build-in image.");
     return 4096; // built-in image size
   }
-
   FILE *fp = fopen(img_file, "rb");
   Assert(fp, "Can not open '%s'", img_file);
 
@@ -64,10 +72,10 @@ static long load_img() {
   Log("The image is %s, size = %ld", img_file, size);
 
   fseek(fp, 0, SEEK_SET);
-  int ret = fread(guest_to_host(RESET_VECTOR), size, 1, fp);
+  int ret = fread(guest_to_host(FLASH_BASE), size, 1, fp);
   assert(ret == 1);
-
   fclose(fp);
+  
   return size;
 }
 
@@ -88,7 +96,7 @@ static int parse_args(int argc, char *argv[]) {
     switch (o) {
       case 'b': sdb_set_batch_mode(); break;
       case 'p': sscanf(optarg, "%d", &difftest_port); break;
-      case 'l': log_file = optarg;if(log_file!=NULL) printf("1\n\n\n"); break;
+      case 'l': log_file = optarg; break;
       case 'd': diff_so_file = optarg; break;
       case 'e': elf_file = optarg; break;
       case 'i': img_file = optarg;  return 0;
@@ -119,13 +127,14 @@ void init_monitor(int argc, char *argv[]) {
   /* Open the log file. */
   init_log(log_file);
 
-  /* Initialize memory. */
-  init_mem();
-
+  /* Initialize memory mrom sram. */
+  init_flash();
+  init_sram();
+  // init_sdram();
   /* Initialize devices. */
   IFDEF(CONFIG_DEVICE, init_device());
 
-  /* Perform ISA dependent initialization. */
+  // /* Perform ISA dependent initialization. */
   init_isa();
 
   /* Initialize elf */
@@ -133,6 +142,7 @@ void init_monitor(int argc, char *argv[]) {
 
   /* Load the image to memory. This will overwrite the built-in image. */
   long img_size = load_img();
+
   /* Initialize differential testing. */
   init_difftest(diff_so_file, img_size, difftest_port);
 

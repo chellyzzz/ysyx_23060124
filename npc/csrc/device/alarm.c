@@ -35,6 +35,7 @@ static void alarm_sig_handler(int signum) {
   }
 }
 
+#ifdef CONFIG_DEVICE
 void init_alarm() {
   struct sigaction s;
   memset(&s, 0, sizeof(s));
@@ -49,3 +50,4 @@ void init_alarm() {
   ret = setitimer(ITIMER_VIRTUAL, &it, NULL);
   Assert(ret == 0, "Can not set timer");
 }
+#endif

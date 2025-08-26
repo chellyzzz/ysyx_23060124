@@ -71,6 +71,8 @@ static inline void update_screen() {
 #endif
 #endif
 
+#ifdef CONFIG_DEVICE
+
 void vga_update_screen() {
   // TODO: call `update_screen()` when the sync register is non-zero,
   // then zero out the sync register
@@ -94,3 +96,5 @@ void init_vga() {
   IFDEF(CONFIG_VGA_SHOW_SCREEN, init_screen());
   IFDEF(CONFIG_VGA_SHOW_SCREEN, memset(vmem, 0, screen_size()));
 }
+
+#endif
