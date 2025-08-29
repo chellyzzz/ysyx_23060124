@@ -2,6 +2,7 @@ module ysyx_23060124
 (
     input                               clock                        ,
     input                               reset                      ,
+    output                              io_ebreak               , 
     input                               io_interrupt               ,
   //     | AXI4 Master总线 |
     input                               io_master_awready          ,
@@ -505,6 +506,7 @@ ysyx_23060124_WBU wbu1(
     .o_pre_ready                       (wbu2exu_ready             ) 
 );
 
+assign io_ebreak = exu2wbu_ebreak;
 
 ysyx_23060124_Xbar xbar
 (
