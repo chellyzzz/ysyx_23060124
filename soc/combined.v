@@ -112,7 +112,7 @@ wire [31:0] rf      [15:0];
 
 genvar i;
 generate
-  for(i = 1; i < 16; i = i + 1) begin
+  for(i = 1; i < 16; i = i + 1) begin : rf_gen
     assign rf[i] = regfile[i];
   end
 endgenerate
@@ -120,7 +120,7 @@ endgenerate
 assign rf[0] = 32'b0;
 
 always @(posedge clock or posedge reset) begin
-  if (reset) begin
+  if (reset) begin : init_loop
     integer j;
     for (j = 1; j < 16; j = j + 1) begin
       regfile[j] <= 32'b0;
