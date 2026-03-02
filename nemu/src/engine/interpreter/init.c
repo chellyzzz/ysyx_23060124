@@ -15,13 +15,25 @@
 
 #include <cpu/cpu.h>
 
+#include <stdio.h>
+
 void sdb_mainloop();
+FILE *dcache_trace_fp = NULL;
 
 void engine_start() {
+  // dcache_trace_fp = fopen("data_trace.bin", "w");
+  if (dcache_trace_fp == NULL) {
+    printf("Failed to open data_trace.bin\n");
+  }
+
 #ifdef CONFIG_TARGET_AM
   cpu_exec(-1);
 #else
   /* Receive commands from user. */
   sdb_mainloop();
 #endif
+
+  if (dcache_trace_fp != NULL) {
+    fclose(dcache_trace_fp);
+  }
 }

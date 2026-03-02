@@ -18,6 +18,31 @@
 #include <device/mmio.h>
 #include <isa.h>
 #include <cpu/trace.h>
+#include <stdio.h>
+
+extern FILE *dcache_trace_fp;
+
+typedef struct {
+  uint8_t is_write;
+  uint8_t len;
+  uint32_t addr;
+  uint32_t pc;
+  uint32_t data;
+} DcacheTraceRecord;
+
+static inline void record_dcache_trace(uint8_t is_write, int len, paddr_t addr, word_t data) {
+  if (dcache_trace_fp) {
+    DcacheTraceRecord record = {
+      .is_write = is_write,
+      .len = (uint8_t)len,
+      .addr = addr,
+      .pc = cpu.pc,
+      .data = data
+    };
+    fwrite(&record, sizeof(record), 1, dcache_trace_fp);
+  }
+}
+
 
 #if   defined(CONFIG_PMEM_MALLOC)
 static uint8_t *pmem = NULL;
@@ -145,6 +170,9 @@ word_t paddr_read(paddr_t addr, int len) {
   #ifdef CONFIG_TARGET_SHARE
   if (likely(in_flash(addr)||in_sdram(addr)||in_sram(addr)||in_uart(addr))) {
     data = pmem_read(addr, len);
+    if (!in_uart(addr)) {
+      record_dcache_trace(0, len, addr, data);
+    }
     return data;
   }
   out_of_bound(addr);
@@ -152,6 +180,7 @@ word_t paddr_read(paddr_t addr, int len) {
   #else
   if (likely(in_pmem(addr))) {
     data = pmem_read(addr, len);
+    record_dcache_trace(0, len, addr, data);
     return data;
   }
   #endif
@@ -177,6 +206,7 @@ void paddr_write(paddr_t addr, int len, word_t data) {
   IFDEF(CONFIG_MTRACE, mtrace_push(addr, len, cpu.pc, true, data));
   #ifdef CONFIG_TARGET_SHARE
   if (in_sdram(addr)||in_sram(addr)) {
+    record_dcache_trace(1, len, addr, data);
     pmem_write(addr, len, data);
     return ;
   }
@@ -192,6 +222,7 @@ void paddr_write(paddr_t addr, int len, word_t data) {
 
   #else
   if (likely(in_pmem(addr))) {
+    record_dcache_trace(1, len, addr, data);
     pmem_write(addr, len, data); 
     return; 
     }

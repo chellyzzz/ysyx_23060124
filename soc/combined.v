@@ -112,7 +112,7 @@ wire [31:0] rf      [15:0];
 
 genvar i;
 generate
-  for(i = 1; i < 16; i = i + 1) begin : rf_gen
+  for(i = 1; i < 16; i = i + 1) begin
     assign rf[i] = regfile[i];
   end
 endgenerate
@@ -120,7 +120,7 @@ endgenerate
 assign rf[0] = 32'b0;
 
 always @(posedge clock or posedge reset) begin
-  if (reset) begin : init_loop
+  if (reset) begin
     integer j;
     for (j = 1; j < 16; j = j + 1) begin
       regfile[j] <= 32'b0;
@@ -1190,14 +1190,14 @@ end
 
 endmodule   
 module ysyx_23060124__icache #(
-    parameter                           ADDR_WIDTH = 32            ,
-    parameter                           DATA_WIDTH = 32            ,
-    parameter                           CACHE_SIZE = 16            ,// Number of cache blocks 
-    parameter                           WAY_NUMS = 2               ,// Block size in bytes
-    parameter                           BYTES_NUMS = 8             
+    parameter                           ADDR_WIDTH      = 32       ,
+    parameter                           DATA_WIDTH      = 32       ,
+    parameter                           SET_NUMS        = 4        ,// Number of cache sets
+    parameter                           WAY_NUMS        = 4        ,// Number of ways (associativity)
+    parameter                           WORDS_PER_BLOCK = 4         // Number of 32-bit words per block (16 bytes)
 )
 (
-   //read data channel
+    //read data channel
     input              [  31:0]         M_AXI_RDATA                ,
     input              [   1:0]         M_AXI_RRESP                ,
     input                               M_AXI_RVALID               ,
@@ -1205,7 +1205,7 @@ module ysyx_23060124__icache #(
     input              [   3:0]         M_AXI_RID                  ,
     input                               M_AXI_RLAST                ,
 
-    //read adress channel
+    //read address channel
     output             [  31:0]         M_AXI_ARADDR               ,
     output                              M_AXI_ARVALID              ,
     input                               M_AXI_ARREADY              ,
@@ -1214,199 +1214,539 @@ module ysyx_23060124__icache #(
     output             [   2:0]         M_AXI_ARSIZE               ,
     output             [   1:0]         M_AXI_ARBURST              ,
 
-    input                               clock                        ,
+    input                               clock                      ,
     input                               rst_n_sync                 ,
     input              [ADDR_WIDTH-1:0] addr                       ,
     output             [DATA_WIDTH-1:0] data                       ,
 
     input                               fence_i                    ,
-    output                              hit                         
+    output                              hit
 );
-localparam                              BLOCK_SIZE = 4*BYTES_NUMS  ;
-localparam                              ARLEN   =  BLOCK_SIZE/4 - 1;
-localparam                              RINDEX = $clog2(BYTES_NUMS);//index = log2(CACHE_SIZE) = 3 = n
-localparam                              INDEX_BITS = $clog2(WAY_NUMS);//index = log2(CACHE_SIZE) = 1
-localparam                              OFFSET_BITS = $clog2(BLOCK_SIZE);//offset = log2(BLOCK_SIZE) = 5 = m
-localparam                              TAG_BITS = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;//tag = 32 - 5  -1 = 26
+// `define ICACHE_DEBUG  1
 
-reg                    [DATA_WIDTH-1:0] cache_data  [WAY_NUMS-1:0][BYTES_NUMS-1:0]                           ;
-reg                    [TAG_BITS-1:0]   cache_tag   [WAY_NUMS-1:0]                           ;
-reg                    [WAY_NUMS-1:0]   cache_valid                ;
+// ============================================================
+// Local Parameters
+// ============================================================
+localparam BLOCK_SIZE    = 4 * WORDS_PER_BLOCK;              // Block size in bytes
+localparam ARLEN         = BLOCK_SIZE / 4 - 1;               // AXI burst length (transfers - 1)
+localparam WORD_IDX_BITS = $clog2(WORDS_PER_BLOCK);          // Bits to index word within block
+localparam INDEX_BITS    = $clog2(SET_NUMS);                 // Bits for set index
+localparam OFFSET_BITS   = $clog2(BLOCK_SIZE);               // Bits for byte offset within block
+localparam TAG_BITS      = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS; // Tag bits
+// With defaults: OFFSET_BITS=4, INDEX_BITS=2, TAG_BITS=26
 
-// AXI
-/******************************regs*****************************/
-    // Initiate AXI transactions
-reg                                         axi_arvalid                ;
-reg                                         axi_rready                 ;
-reg                    [   RINDEX-1:0]      read_index                 ;
-reg                    [  31-OFFSET_BITS:0] araddr                     ;
-reg                                         idle                       ;
-/******************************nets*****************************/
-    // AXI clock signal
-    // AXI active low reset signal
-/******************************combinational logic*****************************/
-        
-assign M_AXI_ARADDR = {araddr, {OFFSET_BITS{1'b0}}};
-// assign M_AXI_ARADDR     = addr;
-assign M_AXI_ARVALID    = axi_arvalid;
-assign M_AXI_ARID       = 'b0;
-assign M_AXI_ARLEN      = ARLEN;
-assign M_AXI_ARSIZE     = 3'b010;
-assign M_AXI_ARBURST    = 2'b01; //incrementing burst
-assign M_AXI_RREADY     = axi_rready; 
+// ============================================================
+// Cache Storage  [set][way]
+// ============================================================
+reg [DATA_WIDTH-1:0] cache_data  [SET_NUMS-1:0][WAY_NUMS-1:0][WORDS_PER_BLOCK-1:0];
+reg [TAG_BITS-1:0]   cache_tag   [SET_NUMS-1:0][WAY_NUMS-1:0];
+reg                  cache_valid [SET_NUMS-1:0][WAY_NUMS-1:0];
 
-wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1:INDEX_BITS]; // tag = M_AXI_ARADDR[31:6]
-wire [INDEX_BITS-1:0] index = araddr[OFFSET_BITS+INDEX_BITS-OFFSET_BITS-1:0]; // index = M_AXI_ARADDR[4+2:4]
+// ============================================================
+// PLRU State  (3 bits per set, binary tree for 4 ways)
+//
+//        plru[0]
+//       /       \
+//   plru[1]   plru[2]
+//   /   \     /   \
+//  W0   W1   W2   W3
+//
+// plru[b]=0 means "left subtree is LRU (victim side)"
+// plru[s][0]=b0 (top), [1]=b1 (left child), [2]=b2 (right child)
+// Victim = { b0, b0 ? b2 : b1 }  → b0=0 picks left half, b0=1 picks right half
+// ============================================================
+reg [2:0] plru [SET_NUMS-1:0]; // 3 bits per set
 
+// ============================================================
+// AXI Control Registers
+// ============================================================
+reg                              axi_arvalid;
+reg                              axi_rready;
+reg [WORD_IDX_BITS-1:0]          read_index;  // Word counter during burst
+reg [ADDR_WIDTH-1-OFFSET_BITS:0] araddr;      // Latched miss address (no offset)
+reg                              idle;
 
-// Cache control logic 
-always @(posedge clock or negedge rst_n_sync)
-begin
-    if(~rst_n_sync) 
-        begin
-            cache_valid <= 'b0;
-        end
-    else if(M_AXI_ARVALID && ~M_AXI_ARREADY) begin
-        cache_tag[index]   <= tag;
-        cache_valid[index] <= 1'b0;                                                       
-    end
-    else if(M_AXI_RLAST) begin
-        cache_valid[index] <= 1'b1;
-    end
-    else if(fence_i) begin
-        cache_valid <= 'b0;
-    end
-end
-	  always @(posedge clock or negedge rst_n_sync)                                       
-	  begin                                                              
-	    if (rst_n_sync == 0)                                          
-	      begin                                                          
-	        araddr <= 'b0;    
-            idle <= 1'b1;                                       
-	      end
-        else if(!hit && idle) begin
-            araddr <= addr[31:OFFSET_BITS];
-            idle <= 1'b0;
-        end
-        else if(M_AXI_RLAST && M_AXI_RREADY) begin
-            if(hit) begin
-                araddr <= 'b0;
-                idle <= 1'b1;
-            end
-            else araddr <= addr[31:OFFSET_BITS];
-        end                                                                                  
-	    else                                                             
-	      araddr <= araddr;     
-	  end                                                                
-
-//----------------------------
-//Read Address Channel
-//----------------------------       
-    // A new axi_arvalid is asserted when there is a hit read address              
-    // available by the master. start_single_read triggers a new read                
-    // transaction                                                                   
-    always @(posedge clock or negedge rst_n_sync)                                                     
-    begin                                                                            
-    if (rst_n_sync == 0)                                                   
-        begin                                                                        
-        axi_arvalid <= 1'b0;                                                       
-        end                                                                          
-    //Signal a new read address command is available by user logic                 
-    else if (!hit && idle)                                                    
-        begin                                                                        
-        axi_arvalid <= 1'b1;     
-        end                                                                          
-    //RAddress accepted by interconnect/slave (issue of M_AXI_ARREADY by slave)    
-    else if (axi_arvalid && M_AXI_ARREADY)                                         
-        begin                                                                        
-        axi_arvalid <= 1'b0;
-        end
-    else if(M_AXI_RLAST && M_AXI_RREADY && (!hit)) begin
-        axi_arvalid <= 1'b1;
-    end       
-    else axi_arvalid <= axi_arvalid;                                                             
-    // retain the previous value                                                   
-    end                                                                              
-
-    // read index
-    always @(posedge clock or negedge rst_n_sync)                                                     
-    begin          
-    if(rst_n_sync == 0) begin
-        read_index <= 'b0;    
-    end
-    else if (M_AXI_ARVALID && M_AXI_ARREADY)                                                   
-        begin                                                                        
-        read_index <= 'b0;                                                       
-        end                                                                          
-    //Signal a new read address command is available by user logic                 
-    else if(M_AXI_RVALID && ~M_AXI_RREADY) begin
-        read_index <= read_index + 1;   
-    end                                        
-    else read_index <= read_index;          
-    end                   
-//--------------------------------
-//Read Data (and Response) Channel
-//--------------------------------
-
-//The Read Data channel returns the results of the read request 
-//The master will accept the read data by asserting axi_rready
-//when there is a hit read data available.
-//While not necessary per spec, it is advisable to reset READY signals in
-//case of differing reset latencies between master/slave.
-
-    always @(posedge clock or negedge rst_n_sync)                                    
-    begin                                                                 
-    if (rst_n_sync == 0)                                                                                    
-        begin                                                             
-        axi_rready <= 1'b0;                                             
-        end                                                                                       
-    else if (M_AXI_RVALID && ~axi_rready)                               
-        begin                                                             
-        axi_rready <= 1'b1;                                             
-        end                                                               
-    // deassert after one clock cycle                                   
-    else if (axi_rready)                                                
-        begin                                                             
-        axi_rready <= 1'b0;                                             
-        end                                                                                                      
-    end 
-
-integer i, j;
+// ============================================================
+// Deadlock Detection (debug only)
+// ============================================================
+`ifdef ICACHE_DEBUG
+reg [15:0] ar_stall_cnt;   // counts cycles where ARVALID=1 but ARREADY=0
+reg [15:0] r_stall_cnt;    // counts cycles where idle=0 but RVALID=0
 always @(posedge clock or negedge rst_n_sync) begin
-    if (!rst_n_sync) begin
-        for (i = 0; i < WAY_NUMS; i = i + 1) begin
-            for (j = 0; j < BYTES_NUMS; j = j + 1) begin
-                cache_data[i][j] <= 32'b0;
-            end
+    if (~rst_n_sync) begin
+        ar_stall_cnt <= 0;
+        r_stall_cnt  <= 0;
+    end else begin
+        // AR channel deadlock: ARVALID asserted but slave never responds
+        if (axi_arvalid && ~M_AXI_ARREADY) begin
+            ar_stall_cnt <= ar_stall_cnt + 1;
+            if (ar_stall_cnt == 999)
+                $display("[ICACHE] !! AR DEADLOCK: ARVALID stuck for 1000 cycles, addr=0x%0h",
+                         {araddr, {OFFSET_BITS{1'b0}}});
+        end else begin
+            ar_stall_cnt <= 0;
         end
-    end else if (M_AXI_RVALID && ~axi_rready) begin
-        cache_data[index][read_index] <= M_AXI_RDATA;
+        // R channel deadlock: refill started but data never comes
+        if (~idle && ~M_AXI_RVALID && ~axi_arvalid) begin
+            r_stall_cnt <= r_stall_cnt + 1;
+            if (r_stall_cnt == 999)
+                $display("[ICACHE] !! R DEADLOCK: waiting for RVALID for 1000 cycles, addr=0x%0h",
+                         {araddr, {OFFSET_BITS{1'b0}}});
+        end else begin
+            r_stall_cnt <= 0;
+        end
+    end
+end
+`endif
+// ============================================================
+// AXI Output Assignments
+// ============================================================
+assign M_AXI_ARADDR  = {araddr, {OFFSET_BITS{1'b0}}};
+assign M_AXI_ARVALID = axi_arvalid;
+assign M_AXI_ARID    = 4'b0;
+assign M_AXI_ARLEN   = ARLEN[7:0];
+assign M_AXI_ARSIZE  = 3'b010;   // 4 bytes per beat
+assign M_AXI_ARBURST = 2'b01;    // INCR
+assign M_AXI_RREADY  = axi_rready;
+
+// ============================================================
+// Address Decomposition  (from latched araddr, offset stripped)
+// ============================================================
+wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1 : INDEX_BITS];
+wire [INDEX_BITS-1:0] index = araddr[INDEX_BITS-1 : 0];
+
+// ============================================================
+// Hit Detection  (combinational, from live addr)
+// ============================================================
+wire [TAG_BITS-1:0]    hit_tag    = addr[ADDR_WIDTH-1              : INDEX_BITS + OFFSET_BITS];
+wire [INDEX_BITS-1:0]  hit_index  = addr[INDEX_BITS + OFFSET_BITS-1 : OFFSET_BITS];
+wire [OFFSET_BITS-1:0] hit_offset = addr[OFFSET_BITS-1             : 0];
+
+wire hit_way0 = cache_valid[hit_index][0] && (cache_tag[hit_index][0] == hit_tag);
+wire hit_way1 = cache_valid[hit_index][1] && (cache_tag[hit_index][1] == hit_tag);
+wire hit_way2 = cache_valid[hit_index][2] && (cache_tag[hit_index][2] == hit_tag);
+wire hit_way3 = cache_valid[hit_index][3] && (cache_tag[hit_index][3] == hit_tag);
+
+assign hit = hit_way0 | hit_way1 | hit_way2 | hit_way3;
+
+// Which way hit? (one-hot → 2-bit encoding)
+wire [1:0] hit_way_sel = hit_way0 ? 2'd0 :
+                         hit_way1 ? 2'd1 :
+                         hit_way2 ? 2'd2 : 2'd3;
+
+// Output data mux
+assign data = hit_way0 ? cache_data[hit_index][0][hit_offset[OFFSET_BITS-1:2]] :
+              hit_way1 ? cache_data[hit_index][1][hit_offset[OFFSET_BITS-1:2]] :
+              hit_way2 ? cache_data[hit_index][2][hit_offset[OFFSET_BITS-1:2]] :
+                         cache_data[hit_index][3][hit_offset[OFFSET_BITS-1:2]] ;
+
+// ============================================================
+// Victim Way Selection  (PLRU tree for latched index)
+//   victim = { plru[0], plru[0] ? plru[2] : plru[1] }
+// ============================================================
+wire [1:0] victim_way = {plru[index][0],
+                         plru[index][0] ? plru[index][2] : plru[index][1]};
+// victim_way is COMBINATIONAL — only use it to determine the next victim.
+// During a refill, always use victim_way_lat (latched at AR handshake).
+reg [1:0] victim_way_lat; // latched at AR handshake, stable for entire burst
+
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync)
+        victim_way_lat <= 2'd0;
+    else if (M_AXI_ARVALID && M_AXI_ARREADY)
+        victim_way_lat <= victim_way;  // lock in BEFORE burst data arrives
+end
+
+// ============================================================
+// PLRU Update Logic
+//   On hit (way w): point the tree away from w
+//     b[0]    <= ~w[1]          (top: point to opposite half)
+//     b[~w[1]]: already correct, update the leaf pointer
+//     b[w[1]+1] <= ~w[0]        (mid: point to opposite leaf)
+//
+//  plru stored as {b2, b1, b0} → index [2]=b2, [1]=b1, [0]=b0
+//   hit W0 (00): b0<=1, b1<=1 → {b2, 1, 1}
+//   hit W1 (01): b0<=1, b1<=0 → {b2, 0, 1}
+//   hit W2 (10): b0<=0, b2<=1 → {1, b1, 0}
+//   hit W3 (11): b0<=0, b2<=0 → {0, b1, 0}
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    integer s;
+    if (~rst_n_sync) begin
+        for (s = 0; s < SET_NUMS; s = s + 1)
+            plru[s] <= 3'b0;
+    end
+    else if (fence_i) begin
+        for (s = 0; s < SET_NUMS; s = s + 1)
+            plru[s] <= 3'b0;
+    end
+    else if (M_AXI_RLAST && M_AXI_RVALID && axi_rready) begin
+        // Refill 完成，更新 victim way 的 PLRU (使用锁存值)
+        case (victim_way_lat)
+            2'd0: plru[index] <= {plru[index][2], 1'b1, 1'b1};
+            2'd1: plru[index] <= {plru[index][2], 1'b0, 1'b1};
+            2'd2: plru[index] <= {1'b1, plru[index][1], 1'b0};
+            2'd3: plru[index] <= {1'b0, plru[index][1], 1'b0};
+        endcase
+    end
+    else if (hit) begin
+        // Cache hit，更新 PLRU
+        case (hit_way_sel)
+            2'd0: plru[hit_index] <= {plru[hit_index][2], 1'b1, 1'b1};
+            2'd1: plru[hit_index] <= {plru[hit_index][2], 1'b0, 1'b1};
+            2'd2: plru[hit_index] <= {1'b1, plru[hit_index][1], 1'b0};
+            2'd3: plru[hit_index] <= {1'b0, plru[hit_index][1], 1'b0};
+        endcase
     end
 end
 
-wire                   [TAG_BITS-1:0]   hit_tag                    ;
-wire                   [INDEX_BITS-1:0] hit_index                  ;
-wire                   [OFFSET_BITS-1:0]hit_offset                 ;
 
-//TODO: hit_tag
-assign data = cache_data[hit_index][hit_offset[OFFSET_BITS-1:2]];
+// ============================================================
+// Cache Tag & Valid Control
+// ============================================================
+integer si, wi;
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        for (si = 0; si < SET_NUMS; si = si + 1)
+            for (wi = 0; wi < WAY_NUMS; wi = wi + 1)
+                cache_valid[si][wi] <= 1'b0;
+    end
+    else if (fence_i && idle) begin
+        for (si = 0; si < SET_NUMS; si = si + 1)
+            for (wi = 0; wi < WAY_NUMS; wi = wi + 1)
+                cache_valid[si][wi] <= 1'b0;
+        `ifdef ICACHE_DEBUG
+        $display("[ICACHE] FENCE.I: all valid cleared");
+        `endif
+    end
+    else if (M_AXI_ARVALID && M_AXI_ARREADY) begin
+        // AR 握手：写 tag，用组合 victim_way（将同时被锁存到 victim_way_lat）
+        cache_tag[index][victim_way]   <= tag;
+        cache_valid[index][victim_way] <= 1'b0;
+        `ifdef ICACHE_DEBUG
+        $display("[ICACHE] MISS  : set=%0d way=%0d tag=0x%0h addr=0x%0h",
+                 index, victim_way, tag, {araddr, {OFFSET_BITS{1'b0}}});
+        `endif
+    end
+    else if (M_AXI_RLAST && M_AXI_RVALID && axi_rready) begin
+        // RLAST：用锁存值 victim_way_lat，确保与 AR 握手时一致
+        cache_valid[index][victim_way_lat] <= 1'b1;
+        `ifdef ICACHE_DEBUG
+        $display("[ICACHE] FILL OK: set=%0d way=%0d tag=0x%0h",
+                 index, victim_way_lat, tag);
+        `endif
+    end
+end
 
-assign hit_tag    = addr[ADDR_WIDTH-1               : INDEX_BITS+OFFSET_BITS];
-assign hit_index  = addr[OFFSET_BITS+INDEX_BITS-1   : OFFSET_BITS];
-assign hit_offset = addr[OFFSET_BITS-1              :0];
+// ============================================================
+// Address Latch & Idle Control
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        araddr <= {(ADDR_WIDTH-OFFSET_BITS){1'b0}};
+        idle   <= 1'b1;
+    end
+    else if (!hit && idle) begin
+        araddr <= addr[ADDR_WIDTH-1 : OFFSET_BITS];
+        idle   <= 1'b0;
+    end
+    else if (M_AXI_RLAST && M_AXI_RREADY) begin
+        if (hit) begin
+            araddr <= {(ADDR_WIDTH-OFFSET_BITS){1'b0}};
+            idle   <= 1'b1;
+        end
+        else begin
+            araddr <= addr[ADDR_WIDTH-1 : OFFSET_BITS];
+        end
+    end
+end
 
-assign hit  =  cache_valid[hit_index] && (cache_tag[hit_index] == hit_tag);
+// ============================================================
+// Read Address Channel — AR handshake
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        axi_arvalid <= 1'b0;
+    end
+    else if (!hit && idle) begin
+        axi_arvalid <= 1'b1;
+    end
+    else if (axi_arvalid && M_AXI_ARREADY) begin
+        axi_arvalid <= 1'b0;
+    end
+    else if (M_AXI_RLAST && M_AXI_RREADY && !hit) begin
+        axi_arvalid <= 1'b1;
+    end
+end
+
+// ============================================================
+// Read Data Channel — R handshake
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        axi_rready <= 1'b0;
+    end
+    else if (M_AXI_RVALID && ~axi_rready) begin
+        // 每拍数据到来时 assert 一个周期
+        axi_rready <= 1'b1;
+    end
+    else if (axi_rready) begin
+        axi_rready <= 1'b0;
+    end
+end
 
 
-// import "DPI-C" function void cache_miss ();
+// ============================================================
+// Burst Word Counter (read_index)
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        read_index <= {WORD_IDX_BITS{1'b0}};
+    end
+    else if (M_AXI_ARVALID && M_AXI_ARREADY) begin
+        read_index <= {WORD_IDX_BITS{1'b0}};
+    end
+    else if (M_AXI_RVALID && axi_rready) begin
+        read_index <= read_index + 1;
+    end
+end
 
-// always @(posedge clock or negedge rst_n_sync) begin
-//  if(!hit && idle) begin
-//     cache_miss();
-//   end
-// end
+
+// ============================================================
+// Cache Data Write (burst fill into victim way)
+// ============================================================
+integer di, dj, dw;
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        for (di = 0; di < SET_NUMS; di = di + 1)
+            for (dj = 0; dj < WAY_NUMS; dj = dj + 1)
+                for (dw = 0; dw < WORDS_PER_BLOCK; dw = dw + 1)
+                    cache_data[di][dj][dw] <= {DATA_WIDTH{1'b0}};
+    end
+    else if (M_AXI_RVALID && axi_rready) begin
+        cache_data[index][victim_way_lat][read_index] <= M_AXI_RDATA;
+    end
+end
+
+
+`ifdef ICACHE_DEBUG
+always @(posedge clock) begin
+    if (hit)
+        $display("[ICACHE] HIT   : set=%0d way=%0d tag=0x%0h addr=0x%0h",
+                 hit_index, hit_way_sel, hit_tag, addr);
+end
+`endif
 
 endmodule
+// module ysyx_23060124__icache #(
+//     parameter                           ADDR_WIDTH      = 32       ,
+//     parameter                           DATA_WIDTH      = 32       ,
+//     parameter                           SET_NUMS        = 4        ,// Number of cache sets
+//     parameter                           WORDS_PER_BLOCK = 4         // Number of 32-bit words per block
+// )
+// (
+//     //read data channel
+//     input              [  31:0]         M_AXI_RDATA                ,
+//     input              [   1:0]         M_AXI_RRESP                ,
+//     input                               M_AXI_RVALID               ,
+//     output                              M_AXI_RREADY               ,
+//     input              [   3:0]         M_AXI_RID                  ,
+//     input                               M_AXI_RLAST                ,
+
+//     //read address channel
+//     output             [  31:0]         M_AXI_ARADDR               ,
+//     output                              M_AXI_ARVALID              ,
+//     input                               M_AXI_ARREADY              ,
+//     output             [   3:0]         M_AXI_ARID                 ,
+//     output             [   7:0]         M_AXI_ARLEN                ,
+//     output             [   2:0]         M_AXI_ARSIZE               ,
+//     output             [   1:0]         M_AXI_ARBURST              ,
+
+//     input                               clock                      ,
+//     input                               rst_n_sync                 ,
+//     input              [ADDR_WIDTH-1:0] addr                       ,
+//     output             [DATA_WIDTH-1:0] data                       ,
+
+//     input                               fence_i                    ,
+//     output                              hit                         
+// );
+
+// // ============================================================
+// // Local Parameters
+// // ============================================================
+// localparam BLOCK_SIZE     = 4 * WORDS_PER_BLOCK;              // Block size in bytes (4 bytes/word * N words)
+// localparam ARLEN          = BLOCK_SIZE / 4 - 1;               // AXI burst length (number of transfers - 1)
+// localparam WORD_IDX_BITS  = $clog2(WORDS_PER_BLOCK);          // Bits to index a word within a block
+// localparam INDEX_BITS     = $clog2(SET_NUMS);                 // Bits for set index: log2(SET_NUMS)
+// localparam OFFSET_BITS    = $clog2(BLOCK_SIZE);               // Bits for byte offset within block: log2(BLOCK_SIZE)
+// localparam TAG_BITS       = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS; // Remaining bits for tag
+
+// // ============================================================
+// // Cache Storage
+// // ============================================================
+// // cache_data[set][word] — each entry is DATA_WIDTH bits
+// reg [DATA_WIDTH-1:0]  cache_data  [SET_NUMS-1:0][WORDS_PER_BLOCK-1:0];
+// reg [TAG_BITS-1:0]    cache_tag   [SET_NUMS-1:0];
+// reg [SET_NUMS-1:0]    cache_valid;
+
+// // ============================================================
+// // AXI Control Registers
+// // ============================================================
+// reg                             axi_arvalid;
+// reg                             axi_rready;
+// reg [WORD_IDX_BITS-1:0]         read_index;          // Word counter during burst read
+// reg [ADDR_WIDTH-1-OFFSET_BITS:0] araddr;             // Latched address (tag + index portion)
+// reg                             idle;                // FSM idle flag
+
+// // ============================================================
+// // AXI Output Assignments
+// // ============================================================
+// assign M_AXI_ARADDR  = {araddr, {OFFSET_BITS{1'b0}}};
+// assign M_AXI_ARVALID = axi_arvalid;
+// assign M_AXI_ARID    = 4'b0;
+// assign M_AXI_ARLEN   = ARLEN[7:0];
+// assign M_AXI_ARSIZE  = 3'b010;       // 4 bytes per transfer
+// assign M_AXI_ARBURST = 2'b01;        // INCR burst
+// assign M_AXI_RREADY  = axi_rready;
+
+// // ============================================================
+// // Address Decomposition (from latched araddr, offset bits already removed)
+// // ============================================================
+// wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1 : INDEX_BITS];
+// wire [INDEX_BITS-1:0] index = araddr[INDEX_BITS-1 : 0];
+
+// // ============================================================
+// // Cache Tag & Valid Control
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         cache_valid <= {SET_NUMS{1'b0}};
+//     end
+//     else if (M_AXI_ARVALID && ~M_AXI_ARREADY) begin
+//         // Refill starting: latch new tag, invalidate the set
+//         cache_tag[index]   <= tag;
+//         cache_valid[index] <= 1'b0;
+//     end
+//     else if (M_AXI_RLAST) begin
+//         // Refill complete: mark set as valid
+//         cache_valid[index] <= 1'b1;
+//     end
+//     else if (fence_i) begin
+//         // FENCE.I: invalidate entire cache
+//         cache_valid <= {SET_NUMS{1'b0}};
+//     end
+// end
+
+// // ============================================================
+// // Address Latch & Idle Control
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         araddr <= {(ADDR_WIDTH-OFFSET_BITS){1'b0}};
+//         idle   <= 1'b1;
+//     end
+//     else if (!hit && idle) begin
+//         // Miss detected: latch the request address
+//         araddr <= addr[ADDR_WIDTH-1 : OFFSET_BITS];
+//         idle   <= 1'b0;
+//     end
+//     else if (M_AXI_RLAST && M_AXI_RREADY) begin
+//         if (hit) begin
+//             // Refill done and new addr hits: go idle
+//             araddr <= {(ADDR_WIDTH-OFFSET_BITS){1'b0}};
+//             idle   <= 1'b1;
+//         end
+//         else begin
+//             // Refill done but new addr misses: latch new address immediately
+//             araddr <= addr[ADDR_WIDTH-1 : OFFSET_BITS];
+//         end
+//     end
+// end
+
+// // ============================================================
+// // Read Address Channel — AR handshake
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         axi_arvalid <= 1'b0;
+//     end
+//     else if (!hit && idle) begin
+//         // Cache miss: issue read request
+//         axi_arvalid <= 1'b1;
+//     end
+//     else if (axi_arvalid && M_AXI_ARREADY) begin
+//         // AR accepted by slave: deassert
+//         axi_arvalid <= 1'b0;
+//     end
+//     else if (M_AXI_RLAST && M_AXI_RREADY && !hit) begin
+//         // Refill done but still missing: issue another request
+//         axi_arvalid <= 1'b1;
+//     end
+// end
+
+// // ============================================================
+// // Burst Word Counter (read_index)
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         read_index <= {WORD_IDX_BITS{1'b0}};
+//     end
+//     else if (M_AXI_ARVALID && M_AXI_ARREADY) begin
+//         // AR handshake done: reset counter for new burst
+//         read_index <= {WORD_IDX_BITS{1'b0}};
+//     end
+//     else if (M_AXI_RVALID && ~M_AXI_RREADY) begin
+//         // Accept a data beat: advance word counter
+//         read_index <= read_index + 1;
+//     end
+// end
+
+// // ============================================================
+// // Read Data Channel — R handshake
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         axi_rready <= 1'b0;
+//     end
+//     else if (M_AXI_RVALID && ~axi_rready) begin
+//         // Data available: assert ready for one cycle
+//         axi_rready <= 1'b1;
+//     end
+//     else if (axi_rready) begin
+//         // Deassert after one clock cycle
+//         axi_rready <= 1'b0;
+//     end
+// end
+
+// // ============================================================
+// // Cache Data Write (burst fill)
+// // ============================================================
+// integer i, j;
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         for (i = 0; i < SET_NUMS; i = i + 1) begin
+//             for (j = 0; j < WORDS_PER_BLOCK; j = j + 1) begin
+//                 cache_data[i][j] <= {DATA_WIDTH{1'b0}};
+//             end
+//         end
+//     end
+//     else if (M_AXI_RVALID && ~axi_rready) begin
+//         // Write received word into the correct set and word position
+//         cache_data[index][read_index] <= M_AXI_RDATA;
+//     end
+// end
+
+// // ============================================================
+// // Hit Detection (combinational, from live addr)
+// // ============================================================
+// wire [TAG_BITS-1:0]    hit_tag    = addr[ADDR_WIDTH-1             : INDEX_BITS + OFFSET_BITS];
+// wire [INDEX_BITS-1:0]  hit_index  = addr[INDEX_BITS+OFFSET_BITS-1 : OFFSET_BITS];
+// wire [OFFSET_BITS-1:0] hit_offset = addr[OFFSET_BITS-1            : 0];
+
+// assign hit  = cache_valid[hit_index] && (cache_tag[hit_index] == hit_tag);
+// assign data = cache_data[hit_index][hit_offset[OFFSET_BITS-1:2]];
+
+// endmodule
 module ysyx_23060124_IFU
 (
     input              [  31:0]         i_pc_next                  ,

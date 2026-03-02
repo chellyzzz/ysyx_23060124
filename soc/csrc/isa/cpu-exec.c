@@ -32,7 +32,7 @@ uint64_t cycles = 0;
 uint64_t ins_cnt = 0;
 
 #define MAX_INST_TO_PRINT 11
-#define PC_WAVE_START 0xa0000018
+// #define PC_WAVE_START 0xa0000018
 #ifdef CONFIG_WP
 bool wp_check();
 #endif
@@ -43,7 +43,7 @@ static VerilatedVcdC* vcd;
 static word_t instr;
 extern bool wave_enable;
 
-#define MAX_DEADS 10000
+// #define MAX_DEADS 10000
 
 #ifdef MAX_DEADS  
 bool dead_detector = true;
