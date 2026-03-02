@@ -64,7 +64,8 @@ reg                  cache_valid [SET_NUMS-1:0][WAY_NUMS-1:0];
 // plru[s][0]=b0 (top), [1]=b1 (left child), [2]=b2 (right child)
 // Victim = { b0, b0 ? b2 : b1 }  → b0=0 picks left half, b0=1 picks right half
 // ============================================================
-reg [2:0] plru [SET_NUMS-1:0]; // 3 bits per set
+
+reg [WAY_NUMS-2:0] plru [SET_NUMS-1:0]; // 3 bits per set
 
 // ============================================================
 // AXI Control Registers
