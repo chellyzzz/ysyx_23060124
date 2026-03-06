@@ -79,39 +79,59 @@ parameter BGEU  = 3'b111;
 
 wire                   [  31:0]         alu_res, load_res          ;
 wire                                    if_lsu                     ;
+wire                                    lsu_done                   ;
 
 reg post_valid;
 
 assign if_lsu = i_load || i_store;
-assign o_post_valid =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
-                       post_valid;
+assign o_post_valid =  if_lsu  ?  lsu_done : post_valid;
 
-assign o_pre_ready  =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
-                       1'b1;
+assign o_pre_ready  =  if_lsu  ?  lsu_done : 1'b1;
 
-always @(posedge clock) begin
+always @(posedge clock or posedge reset) begin
     if(reset) begin
         post_valid <= 1'b0;   
     end
-    post_valid <= i_pre_valid;
+    else post_valid <= i_pre_valid;
 end
 
 reg                  [  31:0]         alu_src1                   ;
 reg                  [  31:0]         alu_src2                   ;
 
-always_comb begin
-    unique case(1'b1)
-        i_src_sel1[0]:  alu_src1 = i_src1;
-        default: alu_src1 = i_pc;
+// always_comb begin
+//     unique case(1'b1)
+//         i_src_sel1[0]:  alu_src1 = i_src1;
+//         default: alu_src1 = i_pc;
+//     endcase
+// end
+
+// always_comb begin
+//     unique case(1'b1)
+//         i_src_sel2[0]:  alu_src2 = i_src2;
+//         i_src_sel2[1]:  alu_src2 = i_imm;
+//         i_src_sel2[2]:  alu_src2 = 32'h4;
+//         default: alu_src2 = 32'h0;
+//     endcase
+// end
+
+wire src_sel1_0 = i_src_sel1[0];
+wire src_sel2_0 = i_src_sel2[0];
+wire src_sel2_1 = i_src_sel2[1];
+wire src_sel2_2 = i_src_sel2[2];
+
+always @(*) begin
+    unique case (1'b1)
+        src_sel1_0:  alu_src1 = i_src1;
+        default:     alu_src1 = i_pc;
     endcase
 end
 
-always_comb begin
-    unique case(1'b1)
-        i_src_sel2[0]:  alu_src2 = i_src2;
-        i_src_sel2[1]:  alu_src2 = i_imm;
-        i_src_sel2[2]:  alu_src2 = 32'h4;
-        default: alu_src2 = 32'h0;
+always @(*) begin
+    unique case (1'b1)
+        src_sel2_0:  alu_src2 = i_src2;
+        src_sel2_1:  alu_src2 = i_imm;
+        src_sel2_2:  alu_src2 = 32'h4;
+        default:     alu_src2 = 32'h0;
     endcase
 end
 
@@ -175,8 +195,8 @@ ysyx_23060124_LSU exu_lsu(
     .M_AXI_BREADY                      (M_AXI_BREADY              ),
     .M_AXI_BID                         (M_AXI_BID                 ),
   //handshake
-    .i_pre_valid                       (i_pre_valid               ),
-    .o_pre_ready                       (o_pre_ready               )
+    .o_pre_ready                       (o_pre_ready               ),
+    .lsu_done                          (lsu_done                  )
 );
 
 wire beq, bne;

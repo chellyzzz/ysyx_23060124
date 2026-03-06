@@ -37,7 +37,8 @@ VERILATOR_FLAGS += -cc --exe --build --trace -MMD \
 				-O3 --x-assign fast --x-initial fast
 # Accelerate speed
 VERILATOR_FLAGS += -j 8
-
+#tapeout check
+VERILATOR_CHECK += --lint-only -Wall -Wno-DECLFILENAME
 
 LIBS += $(shell llvm-config --libs)
 INC_PATH += $(SOC_HOME)/csrc/include $(SOC_HOME)/csrc/isa/include $(LIBS)
@@ -63,8 +64,8 @@ NPC_FLAGS += -b
 NPC_FLAGS += -i $(IMAGE)
 
 VSRCS += $(shell find $(abspath $(SOC_HOME)/vsrc) \( -name "*.v" -o -name "*.sv" \) -print)
-VSRCS += $(shell find $(YSYX_SOC_HOME)/perip -name "*.v" -print)
-VSRCS += $(shell find $(YSYX_SOC_HOME)/build -name "*.v" -print)
+SOC_VSRCS += $(shell find $(YSYX_SOC_HOME)/perip -name "*.v" -print)
+SOC_VSRCS += $(shell find $(YSYX_SOC_HOME)/build -name "*.v" -print)
 CSRCS += $(shell find $(abspath ./csrc) -name "*.c" -or -name "*.cc" -or -name "*.cpp")
 CSRCS += $(SRC_AUTO_BIND)
 
@@ -80,7 +81,7 @@ perf:
 	# cat ./perf.log | grep -E "^\[.*\]"
 	cat ./perf.log
 	
-compile: $(VSRCS) $(CSRCS) $(NVBOARD_ARCHIVE)
+compile: $(VSRCS) $(SOC_VSRCS) $(CSRCS) $(NVBOARD_ARCHIVE)
 	@rm -rf $(OBJ_DIR)
 	$(call git_commit, "sim RTL") # DO NOT REMOVE THIS LINE!!!
 	$(VERILATOR) $(C_FLAGS) $(VERILATOR_FLAGS) \
@@ -92,6 +93,9 @@ compile: $(VSRCS) $(CSRCS) $(NVBOARD_ARCHIVE)
 run: compile
 	$(BUILD_DIR)/$(VNAME) $(NPC_FLAGS)
 
+check:
+	$(VERILATOR) $(VERILATOR_CHECK) $(VSRCS) > check.txt 2>&1
+	
 wave:
 	gtkwave $(BUILD_DIR)/wave.vcd
 
@@ -101,7 +105,7 @@ menuconfig:
 sim: run wave
 
 combined :
-	cat $(find ./vsrc/ -name "*.v") > ysyx_23060124.v
+	find ./vsrc -type f -name "*.v" | sort | xargs cat > ./combined.v
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -1,3 +1,2719 @@
+module ysyx_23060124_CSR_RegisterFile (
+    input                               clock                      ,
+    input                               reset                        ,
+    input                               i_csr_wen                  ,
+    input                               i_ecall                    ,
+    input                               i_mret                     ,
+    input              [  31:0]         i_pc                       ,
+    
+    input              [  11:0]         i_csr_raddr                ,
+    output             [  31:0]         o_csr_rdata                ,
+
+    input              [  11:0]         i_csr_waddr                ,
+    input              [  31:0]         i_csr_wdata                ,
+
+    output             [  31:0]         o_mepc                     ,
+    output             [  31:0]         o_mtvec                    
+);
+// ysyx_23060124
+wire [31:0] mvendorid , marchid;
+wire [31:0] mcause;
+assign mvendorid    = 32'h79737978;
+assign marchid      = 32'h23060124;
+assign mcause       = 32'd11;
+
+reg [12:0] mstatus;
+reg [31:0] mepc;
+reg [31:0] mtvec;
+
+always @(posedge  clock or posedge reset) begin
+    if(reset) begin
+        mstatus <= 13'b0;
+        mepc <= 32'b0;
+        mtvec <= 32'b0;
+    end
+    else if(i_ecall)begin
+        mepc    <= i_pc;
+        // mstatus <= {mstatus[31:13], 2'b11, mstatus[10:8],mstatus[3],mstatus[6:4], 1'b0, mstatus[2:0]};
+        mstatus[7] <= mstatus[3];
+        mstatus[12:11] <= 2'b11;
+        mstatus[3] <= 1'b0;
+    end
+    else if(i_mret)begin
+        mepc <= mepc;
+        // mstatus <={mstatus[31:13], 2'b0, mstatus[10:8],1'b1,mstatus[6:4], 1'b0, mstatus[2:0]};
+        mstatus[3] <= mstatus[7];
+        mstatus[7] <= 1'b1;
+        mstatus[12:11] <= 2'b0;
+    end
+    else if (i_csr_wen) begin 
+        case (i_csr_waddr)
+            // 12'h300: mstatus    <= i_csr_wdata[15:0];
+            12'h341: mepc       <= i_csr_wdata;
+            12'h305: mtvec      <= i_csr_wdata;
+            default: begin
+            end
+        endcase
+    end
+    else begin
+        mtvec <= mtvec;
+        mepc <= mepc;
+        mstatus <= mstatus;
+    end
+end 
+// always @(*) begin
+//     case(i_csr_raddr)
+//         12'hf11: o_csr_rdata = mvendorid;
+//         12'hf12: o_csr_rdata = marchid;
+//         12'h300: o_csr_rdata = mstatus;
+//         12'h341: o_csr_rdata = mepc;
+//         12'h342: o_csr_rdata = mcause;
+//         12'h305: o_csr_rdata = mtvec;
+//         default: o_csr_rdata = 32'b0;
+//     endcase
+// end
+
+assign o_csr_rdata  = i_csr_raddr == 12'hf11 ? mvendorid :
+                      i_csr_raddr == 12'hf12 ? marchid :
+                      i_csr_raddr == 12'h300 ? {19'b0, mstatus} :
+                      i_csr_raddr == 12'h341 ? mepc :
+                      i_csr_raddr == 12'h342 ? mcause :
+                      i_csr_raddr == 12'h305 ? mtvec : 
+                      32'b0;
+
+assign o_mepc       = i_mret    ? mepc  : 32'b0;
+assign o_mtvec      = i_ecall   ? mtvec : 32'b0;
+
+endmodule
+module ysyx_23060124_RegisterFile (
+    input                               clock                      ,
+    input                               reset                      ,
+    input              [  31:0]         wdata                      ,
+    input              [   3:0]         waddr                      ,
+  
+    //
+    input              [   3:0]         exu_rd                     ,
+    input              [  31:0]         exu_wdata                  ,
+    input                               exu_wen                    ,
+    input              [   3:0]         wbu_rd                     ,
+    input              [  31:0]         wbu_wdata                  ,
+    input                               wbu_wen                    ,
+    // 
+    input              [   3:0]         raddr1                     ,
+    input              [   3:0]         raddr2                     ,
+
+    output             [  31:0]         rdata1                     ,
+    output             [  31:0]         rdata2                     ,
+    input                               wen                         
+);
+
+reg  [31:0] regfile [15:1];
+wire [31:0] rf      [15:0];
+
+genvar i;
+generate
+  for(i = 1; i < 16; i = i + 1) begin
+    assign rf[i] = regfile[i];
+  end
+endgenerate
+
+assign rf[0] = 32'b0;
+
+always @(posedge clock or posedge reset) begin
+  if (reset) begin
+    integer j;
+    for (j = 1; j < 16; j = j + 1) begin
+      regfile[j] <= 32'b0;
+    end
+  end else if (wen && waddr != 0) begin
+    regfile[waddr[3:0]] <= wdata;
+  end
+end
+
+assign rdata1 = (raddr1 == exu_rd && exu_wen)  ? exu_wdata:
+                (raddr1 == wbu_rd && wbu_wen)  ? wbu_wdata:
+                rf[raddr1[3:0]];
+
+assign rdata2 = (raddr2 == exu_rd && exu_wen)  ? exu_wdata:
+                (raddr2 == wbu_rd && wbu_wen)  ? wbu_wdata:
+                rf[raddr2[3:0]];
+
+
+endmodule
+
+module ysyx_23060124_ALU (
+    input       signed [  31:0]         src1                       ,
+    input       signed [  31:0]         src2                       ,
+    input              [   9:0]         opt                        ,
+    output reg         [  31:0]         res                         
+);
+
+/***************parameter***************/
+// parameter ADD =  4'b0000;
+// parameter SUB =  4'b1000;
+// parameter SLL =  4'b0001;
+// parameter SLT =  4'b0010;
+// parameter SLTU=  4'b0011;
+// parameter XOR =  4'b0100;
+// parameter SRL =  4'b0101;
+// parameter OR  =  4'b0110;
+// parameter AND =  4'b0111;
+
+// localparam                              ALU_ADD         =  10'd1   ;
+// localparam                              ALU_SUB         =  10'd2   ;
+// localparam                              ALU_SLL         =  10'd4   ;
+// localparam                              ALU_SLT         =  10'd8   ;
+// localparam                              ALU_SLTU        =  10'd16  ;
+// localparam                              ALU_XOR         =  10'd32  ;
+// localparam                              ALU_SRL         =  10'd64  ;
+// localparam                              ALU_OR          =  10'd128 ;
+// localparam                              ALU_AND         =  10'd256 ;
+// localparam                              ALU_SRA         =  10'd512  ;
+
+wire                   [  31:0]         add_res                    ;
+wire                   [  31:0]         and_res                    ;
+wire                   [  31:0]         or_res                     ;
+wire                   [  31:0]         xor_res                    ;
+wire                   [  31:0]         sll_res                    ;
+wire                   [  31:0]         slt_res                    ;
+wire                   [  31:0]         sltu_res                   ;
+wire            signed [  31:0]         srl_res                    ;
+wire                   [  31:0]         sra_res                    ;
+wire                   [  31:0]         sub_res                    ;
+
+wire                                    op_add                     ;
+wire                                    op_sub                     ;
+wire                                    op_and                     ;
+wire                                    op_or                      ;
+wire                                    op_xor                     ;
+wire                                    op_sll                     ;
+wire                                    op_slt                     ;
+wire                                    op_sltu                    ;
+wire                                    op_srl                     ;
+wire                                    op_sra                     ;
+
+
+assign op_add = opt[0];
+assign op_sub = opt[1];
+assign op_sll = opt[2];
+assign op_slt = opt[3];
+assign op_sltu= opt[4];
+assign op_xor = opt[5];
+assign op_srl = opt[6];
+assign op_or  = opt[7];
+assign op_and = opt[8];
+assign op_sra = opt[9];
+
+assign add_res      = src1 + src2;
+assign sub_res      = src1 - src2;
+assign and_res      = src1 & src2;
+assign or_res       = src1 | src2;
+assign xor_res      = src1 ^ src2;
+assign sll_res      = src1 << src2[4:0];
+assign srl_res      = src1 >>> src2[4:0];
+assign sra_res      = src1 >> src2[4:0];
+assign slt_res      = (src1[31] != src2[31]) ? (src1[31] ? 32'b1 : 32'b0) : ((src1 < src2) ? 32'b1 : 32'b0);
+assign sltu_res     = ({1'b0, src1} < {1'b0, src2}) ? 32'b1 : 32'b0;
+
+always_comb begin
+    unique case(1'b1)
+        op_add:     res = add_res;
+        op_sub:     res = sub_res;
+        op_slt:     res = slt_res;
+        op_sltu:    res = sltu_res;
+        op_and:     res = and_res;
+        op_or:      res = or_res;
+        op_xor:     res = xor_res;
+        op_sll:     res = sll_res;
+        op_srl:     res = srl_res;
+        op_sra:     res = sra_res;
+        default:    res = 32'b0;
+    endcase
+end
+
+endmodule
+// // ============================================================
+// // Phase 1: Write-Through, No-Write-Allocate Data Cache
+// // ============================================================
+// //
+// // Sits between LSU AXI ports and AXI Crossbar.
+// // - Cacheable loads:  answered from cache if hit, else AXI burst refill
+// // - Cacheable stores: write-through to AXI, update cache if hit
+// // - Non-cacheable:    pass through directly to AXI (MMIO)
+// module ysyx_23060124__dcache #(
+//     parameter ADDR_WIDTH      = 32,
+//     parameter DATA_WIDTH      = 32,
+//     parameter SET_NUMS        = 4 ,   // Number of cache sets
+//     parameter WAY_NUMS        = 4 ,   // Number of ways (associativity)
+//     parameter WORDS_PER_BLOCK = 4 ,   // 32-bit words per block (16 bytes)
+
+//     // Cacheable address ranges (inclusive start, exclusive end)
+//     // RAM / ROM regions — normal memory, safe to cache
+//     parameter CACHE_SRAM_START  = 32'h0f000000,  // SRAM  8KB
+//     parameter CACHE_SRAM_END    = 32'h0f002000,
+//     parameter CACHE_MROM_START  = 32'h20000000,  // MROM  4KB (read-only)
+//     parameter CACHE_MROM_END    = 32'h20001000,
+//     parameter CACHE_FLASH_START = 32'h30000000,  // Flash 256MB (read-only)
+//     parameter CACHE_FLASH_END   = 32'h40000000,
+//     parameter CACHE_PSRAM_START = 32'h80000000,  // PSRAM 512MB
+//     parameter CACHE_PSRAM_END   = 32'ha0000000,
+//     parameter CACHE_SDRAM_START = 32'ha0000000,  // SDRAM 512MB
+//     parameter CACHE_SDRAM_END   = 32'hc0000000
+// )(
+//     input                               clock,
+//     input                               rst_n_sync,
+
+//     // ── LSU side (upstream, directly from LSU AXI ports) ──
+//     // Write address channel (LSU → DCache)
+//     input      [ADDR_WIDTH-1:0]         S_AXI_AWADDR,
+//     input                               S_AXI_AWVALID,
+//     output                              S_AXI_AWREADY,
+//     input      [7:0]                    S_AXI_AWLEN,
+//     input      [2:0]                    S_AXI_AWSIZE,
+//     input      [1:0]                    S_AXI_AWBURST,
+//     input      [3:0]                    S_AXI_AWID,
+
+//     // Write data channel (LSU → DCache)
+//     input                               S_AXI_WVALID,
+//     output                              S_AXI_WREADY,
+//     input      [DATA_WIDTH-1:0]         S_AXI_WDATA,
+//     input      [3:0]                    S_AXI_WSTRB,
+//     input                               S_AXI_WLAST,
+
+//     // Write response channel (DCache → LSU)
+//     output     [1:0]                    S_AXI_BRESP,
+//     output                              S_AXI_BVALID,
+//     input                               S_AXI_BREADY,
+//     output     [3:0]                    S_AXI_BID,
+
+//     // Read address channel (LSU → DCache)
+//     input      [ADDR_WIDTH-1:0]         S_AXI_ARADDR,
+//     input                               S_AXI_ARVALID,
+//     output                              S_AXI_ARREADY,
+//     input      [3:0]                    S_AXI_ARID,
+//     input      [7:0]                    S_AXI_ARLEN,
+//     input      [2:0]                    S_AXI_ARSIZE,
+//     input      [1:0]                    S_AXI_ARBURST,
+
+//     // Read data channel (DCache → LSU)
+//     output     [DATA_WIDTH-1:0]         S_AXI_RDATA,
+//     output     [1:0]                    S_AXI_RRESP,
+//     output                              S_AXI_RVALID,
+//     input                               S_AXI_RREADY,
+//     output     [3:0]                    S_AXI_RID,
+//     output                              S_AXI_RLAST,
+
+//     // ── Memory side (downstream, to AXI Crossbar) ──
+//     // Write address channel (DCache → Crossbar)
+//     output     [ADDR_WIDTH-1:0]         M_AXI_AWADDR,
+//     output                              M_AXI_AWVALID,
+//     input                               M_AXI_AWREADY,
+//     output     [7:0]                    M_AXI_AWLEN,
+//     output     [2:0]                    M_AXI_AWSIZE,
+//     output     [1:0]                    M_AXI_AWBURST,
+//     output     [3:0]                    M_AXI_AWID,
+
+//     // Write data channel (DCache → Crossbar)
+//     output                              M_AXI_WVALID,
+//     input                               M_AXI_WREADY,
+//     output     [DATA_WIDTH-1:0]         M_AXI_WDATA,
+//     output     [3:0]                    M_AXI_WSTRB,
+//     output                              M_AXI_WLAST,
+
+//     // Write response channel (Crossbar → DCache)
+//     input      [1:0]                    M_AXI_BRESP,
+//     input                               M_AXI_BVALID,
+//     output                              M_AXI_BREADY,
+//     input      [3:0]                    M_AXI_BID,
+
+//     // Read address channel (DCache → Crossbar)
+//     output     [ADDR_WIDTH-1:0]         M_AXI_ARADDR,
+//     output                              M_AXI_ARVALID,
+//     input                               M_AXI_ARREADY,
+//     output     [3:0]                    M_AXI_ARID,
+//     output     [7:0]                    M_AXI_ARLEN,
+//     output     [2:0]                    M_AXI_ARSIZE,
+//     output     [1:0]                    M_AXI_ARBURST,
+
+//     // Read data channel (Crossbar → DCache)
+//     input      [DATA_WIDTH-1:0]         M_AXI_RDATA,
+//     input      [1:0]                    M_AXI_RRESP,
+//     input                               M_AXI_RVALID,
+//     output                              M_AXI_RREADY,
+//     input      [3:0]                    M_AXI_RID,
+//     input                               M_AXI_RLAST
+// );
+
+// `define DCACHE_DEBUG 1
+
+// // ============================================================
+// // Derived Parameters
+// // ============================================================
+// localparam BLOCK_SIZE     = 4 * WORDS_PER_BLOCK;               // bytes per block
+// localparam REFILL_BEATS   = WORDS_PER_BLOCK;                   // AXI burst beats for refill
+// localparam ARLEN_REFILL   = REFILL_BEATS - 1;                  // AXI ARLEN for refill burst
+// localparam WORD_IDX_BITS  = $clog2(WORDS_PER_BLOCK);           // bits to index word in block
+// localparam INDEX_BITS     = $clog2(SET_NUMS);                  // bits for set index
+// localparam OFFSET_BITS    = $clog2(BLOCK_SIZE);                // byte offset bits
+// localparam TAG_BITS       = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;
+// localparam PLRU_BITS      = WAY_NUMS - 1;                      // 3 for 4-way
+
+// // ============================================================
+// // Cache Storage [set][way]
+// // ============================================================
+// reg [DATA_WIDTH-1:0]  cache_data  [SET_NUMS-1:0][WAY_NUMS-1:0][WORDS_PER_BLOCK-1:0];
+// reg [TAG_BITS-1:0]    cache_tag   [SET_NUMS-1:0][WAY_NUMS-1:0];
+// reg                   cache_valid [SET_NUMS-1:0][WAY_NUMS-1:0];
+
+// // ============================================================
+// // PLRU State (3-bit binary tree per set, same as ICache)
+// // ============================================================
+// reg [PLRU_BITS-1:0] plru [SET_NUMS-1:0];
+
+// // ============================================================
+// // Cacheability Check
+// // ============================================================
+// function is_cacheable;
+//     input [ADDR_WIDTH-1:0] a;
+//     begin
+//         is_cacheable = (a >= CACHE_SDRAM_START && a < CACHE_SDRAM_END);
+//     end
+// endfunction
+
+// // ============================================================
+// // State Machine
+// // ============================================================
+// localparam ST_IDLE        = 3'd0;
+// localparam ST_REFILL_AR   = 3'd1;  // send AR for cache line refill
+// localparam ST_REFILL_R    = 3'd2;  // receive burst R data
+// localparam ST_BYPASS_AR   = 3'd3;  // forward uncached read AR
+// localparam ST_BYPASS_R    = 3'd4;  // forward uncached read R
+// localparam ST_STORE_PASS  = 3'd5;  // write-through store (pass AW/W/B)
+
+// reg [2:0] state;
+
+// // ============================================================
+// // Address Decomposition (live, from current request)
+// // ============================================================
+// wire [TAG_BITS-1:0]    req_tag    = S_AXI_ARADDR[ADDR_WIDTH-1 : INDEX_BITS + OFFSET_BITS];
+// wire [INDEX_BITS-1:0]  req_index  = S_AXI_ARADDR[INDEX_BITS + OFFSET_BITS - 1 : OFFSET_BITS];
+// wire [OFFSET_BITS-1:0] req_offset = S_AXI_ARADDR[OFFSET_BITS-1 : 0];
+
+// // ============================================================
+// // Latched Request Registers
+// // ============================================================
+// reg [ADDR_WIDTH-1:0]   lat_addr;       // full latched address
+// reg [3:0]              lat_arid;
+// reg [2:0]              lat_arsize;
+// reg                    lat_cacheable;
+
+// wire [TAG_BITS-1:0]    lat_tag    = lat_addr[ADDR_WIDTH-1 : INDEX_BITS + OFFSET_BITS];
+// wire [INDEX_BITS-1:0]  lat_index  = lat_addr[INDEX_BITS + OFFSET_BITS - 1 : OFFSET_BITS];
+// wire [OFFSET_BITS-1:0] lat_offset = lat_addr[OFFSET_BITS-1 : 0];
+
+// // ============================================================
+// // Hit Detection (combinational, for latched address during refill)
+// // ============================================================
+// wire way0_hit = cache_valid[lat_index][0] && (cache_tag[lat_index][0] == lat_tag);
+// wire way1_hit = cache_valid[lat_index][1] && (cache_tag[lat_index][1] == lat_tag);
+// wire way2_hit = cache_valid[lat_index][2] && (cache_tag[lat_index][2] == lat_tag);
+// wire way3_hit = cache_valid[lat_index][3] && (cache_tag[lat_index][3] == lat_tag);
+// wire cache_hit = way0_hit | way1_hit | way2_hit | way3_hit;
+
+// wire [1:0] hit_way = way0_hit ? 2'd0 :
+//                      way1_hit ? 2'd1 :
+//                      way2_hit ? 2'd2 : 2'd3;
+
+// // Hit data output
+// wire [DATA_WIDTH-1:0] hit_rdata_word =
+//     way0_hit ? cache_data[lat_index][0][lat_offset[OFFSET_BITS-1:2]] :
+//     way1_hit ? cache_data[lat_index][1][lat_offset[OFFSET_BITS-1:2]] :
+//     way2_hit ? cache_data[lat_index][2][lat_offset[OFFSET_BITS-1:2]] :
+//                cache_data[lat_index][3][lat_offset[OFFSET_BITS-1:2]] ;
+
+// // ============================================================
+// // Store Hit Detection (for write-through cache update on store)
+// // ============================================================
+// wire [TAG_BITS-1:0]    st_tag   = S_AXI_AWADDR[ADDR_WIDTH-1 : INDEX_BITS + OFFSET_BITS];
+// wire [INDEX_BITS-1:0]  st_index = S_AXI_AWADDR[INDEX_BITS + OFFSET_BITS - 1 : OFFSET_BITS];
+// wire [OFFSET_BITS-1:0] st_offset = S_AXI_AWADDR[OFFSET_BITS-1 : 0];
+
+// wire st_way0_hit = cache_valid[st_index][0] && (cache_tag[st_index][0] == st_tag);
+// wire st_way1_hit = cache_valid[st_index][1] && (cache_tag[st_index][1] == st_tag);
+// wire st_way2_hit = cache_valid[st_index][2] && (cache_tag[st_index][2] == st_tag);
+// wire st_way3_hit = cache_valid[st_index][3] && (cache_tag[st_index][3] == st_tag);
+// wire st_cache_hit = st_way0_hit | st_way1_hit | st_way2_hit | st_way3_hit;
+
+// wire [1:0] st_hit_way = st_way0_hit ? 2'd0 :
+//                          st_way1_hit ? 2'd1 :
+//                          st_way2_hit ? 2'd2 : 2'd3;
+
+// // ============================================================
+// // Victim Way Selection (PLRU tree for latched index)
+// // ============================================================
+// wire [1:0] victim_way = {plru[lat_index][0],
+//                          plru[lat_index][0] ? plru[lat_index][2] : plru[lat_index][1]};
+
+// reg [1:0] victim_way_lat;  // latched at refill AR handshake
+
+// // ============================================================
+// // Refill Control
+// // ============================================================
+// reg [WORD_IDX_BITS-1:0] refill_cnt;   // word counter during burst
+// reg                     refill_rready;
+
+// // ============================================================
+// // Hit Response Registers
+// // ============================================================
+// reg        hit_resp_valid;
+// reg [DATA_WIDTH-1:0] hit_resp_data;
+// reg [3:0]  hit_resp_id;
+
+// // ============================================================
+// // Bypass Response (pass-through for uncached reads)
+// // ============================================================
+// reg bypass_ar_valid;
+
+// // ============================================================
+// // Main State Machine
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         state          <= ST_IDLE;
+//         lat_addr       <= {ADDR_WIDTH{1'b0}};
+//         lat_arid       <= 4'd0;
+//         lat_arsize     <= 3'd0;
+//         lat_cacheable  <= 1'b0;
+//         hit_resp_valid <= 1'b0;
+//         hit_resp_data  <= {DATA_WIDTH{1'b0}};
+//         hit_resp_id    <= 4'd0;
+//         bypass_ar_valid <= 1'b0;
+//         victim_way_lat <= 2'd0;
+//         refill_cnt     <= {WORD_IDX_BITS{1'b0}};
+//         refill_rready  <= 1'b0;
+//     end
+//     else begin
+//         // Default: clear single-cycle pulses
+//         if (hit_resp_valid && S_AXI_RREADY)
+//             hit_resp_valid <= 1'b0;
+
+//         case (state)
+//         // ─────────────────────────────────────────
+//         ST_IDLE: begin
+//             // Priority: handle stores first (pass-through), then loads
+//             if (S_AXI_AWVALID) begin
+//                 // Store: always pass through to AXI (write-through)
+//                 state <= ST_STORE_PASS;
+//             end
+//             else if (S_AXI_ARVALID) begin
+//                 // Latch the read request
+//                 lat_addr      <= S_AXI_ARADDR;
+//                 lat_arid      <= S_AXI_ARID;
+//                 lat_arsize    <= S_AXI_ARSIZE;
+//                 lat_cacheable <= is_cacheable(S_AXI_ARADDR);
+
+//                 if (is_cacheable(S_AXI_ARADDR)) begin
+//                     // Check hit using combinational req_* signals
+//                     // (they use S_AXI_ARADDR which is still valid this cycle)
+//                     // We need to use req_tag/req_index for fresh hit check
+//                     if ((cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag) ||
+//                         (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag) ||
+//                         (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag) ||
+//                         (cache_valid[req_index][3] && cache_tag[req_index][3] == req_tag)) begin
+//                         // Cache hit! Return data immediately
+//                         hit_resp_valid <= 1'b1;
+//                         hit_resp_id    <= S_AXI_ARID;
+//                         // Mux data from correct way
+//                         if (cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag)
+//                             hit_resp_data <= cache_data[req_index][0][req_offset[OFFSET_BITS-1:2]];
+//                         else if (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag)
+//                             hit_resp_data <= cache_data[req_index][1][req_offset[OFFSET_BITS-1:2]];
+//                         else if (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag)
+//                             hit_resp_data <= cache_data[req_index][2][req_offset[OFFSET_BITS-1:2]];
+//                         else
+//                             hit_resp_data <= cache_data[req_index][3][req_offset[OFFSET_BITS-1:2]];
+//                         state <= ST_IDLE; // stay in idle, response goes out this cycle
+//                     end
+//                     else begin
+//                         // Cache miss → start refill
+//                         state <= ST_REFILL_AR;
+//                     end
+//                 end
+//                 else begin
+//                     // Non-cacheable → bypass
+//                     bypass_ar_valid <= 1'b1;
+//                     state           <= ST_BYPASS_AR;
+//                 end
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_REFILL_AR: begin
+//             if (M_AXI_ARREADY) begin
+//                 victim_way_lat <= victim_way;  // latch victim
+//                 refill_cnt     <= {WORD_IDX_BITS{1'b0}};
+//                 refill_rready  <= 1'b0;
+//                 state          <= ST_REFILL_R;
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_REFILL_R: begin
+//             if (M_AXI_RVALID && ~refill_rready) begin
+//                 refill_rready <= 1'b1;
+//             end
+//             else if (refill_rready) begin
+//                 refill_rready <= 1'b0;
+//                 refill_cnt    <= refill_cnt + 1;
+//                 if (M_AXI_RLAST) begin
+//                     // Refill done → respond to LSU with the requested word
+//                     hit_resp_valid <= 1'b1;
+//                     hit_resp_id    <= lat_arid;
+//                     hit_resp_data  <= cache_data[lat_index][victim_way_lat][lat_offset[OFFSET_BITS-1:2]];
+//                     state          <= ST_IDLE;
+//                 end
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_BYPASS_AR: begin
+//             if (M_AXI_ARREADY) begin
+//                 bypass_ar_valid <= 1'b0;
+//                 state           <= ST_BYPASS_R;
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_BYPASS_R: begin
+//             // Pass RVALID/RREADY/RDATA directly between crossbar and LSU
+//             if (M_AXI_RVALID && M_AXI_RLAST && S_AXI_RREADY) begin
+//                 state <= ST_IDLE;
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_STORE_PASS: begin
+//             // Pass AW/W/B channels directly between LSU and crossbar
+//             if (M_AXI_BVALID && S_AXI_BREADY) begin
+//                 state <= ST_IDLE;
+//             end
+//         end
+
+//         default: state <= ST_IDLE;
+//         endcase
+//     end
+// end
+
+// // ============================================================
+// // Cache Data Write (refill burst)
+// // ============================================================
+// integer di, dj, dw;
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         for (di = 0; di < SET_NUMS; di = di + 1)
+//             for (dj = 0; dj < WAY_NUMS; dj = dj + 1)
+//                 for (dw = 0; dw < WORDS_PER_BLOCK; dw = dw + 1)
+//                     cache_data[di][dj][dw] <= {DATA_WIDTH{1'b0}};
+//     end
+//     else if (state == ST_REFILL_R && M_AXI_RVALID && refill_rready) begin
+//         cache_data[lat_index][victim_way_lat][refill_cnt] <= M_AXI_RDATA;
+//     end
+//     else if (state == ST_STORE_PASS && S_AXI_WVALID && M_AXI_WREADY && st_cache_hit) begin
+//         // Write-through: update cache on store hit (byte-level merge)
+//         if (S_AXI_WSTRB[0]) cache_data[st_index][st_hit_way][st_offset[OFFSET_BITS-1:2]][ 7: 0] <= S_AXI_WDATA[ 7: 0];
+//         if (S_AXI_WSTRB[1]) cache_data[st_index][st_hit_way][st_offset[OFFSET_BITS-1:2]][15: 8] <= S_AXI_WDATA[15: 8];
+//         if (S_AXI_WSTRB[2]) cache_data[st_index][st_hit_way][st_offset[OFFSET_BITS-1:2]][23:16] <= S_AXI_WDATA[23:16];
+//         if (S_AXI_WSTRB[3]) cache_data[st_index][st_hit_way][st_offset[OFFSET_BITS-1:2]][31:24] <= S_AXI_WDATA[31:24];
+//     end
+// end
+
+// // ============================================================
+// // Cache Tag & Valid Control
+// // ============================================================
+// integer si, wi;
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         for (si = 0; si < SET_NUMS; si = si + 1)
+//             for (wi = 0; wi < WAY_NUMS; wi = wi + 1)
+//                 cache_valid[si][wi] <= 1'b0;
+//     end
+//     else if (state == ST_REFILL_AR && M_AXI_ARREADY) begin
+//         cache_tag[lat_index][victim_way]   <= lat_tag;
+//         cache_valid[lat_index][victim_way] <= 1'b0;
+//         `ifdef DCACHE_DEBUG
+//         $display("[DCACHE] MISS  : set=%0d way=%0d tag=0x%0h addr=0x%0h",
+//                  lat_index, victim_way, lat_tag, lat_addr);
+//         `endif
+//     end
+//     else if (state == ST_REFILL_R && M_AXI_RVALID && refill_rready && M_AXI_RLAST) begin
+//         cache_valid[lat_index][victim_way_lat] <= 1'b1;
+//         `ifdef DCACHE_DEBUG
+//         $display("[DCACHE] FILL OK: set=%0d way=%0d tag=0x%0h",
+//                  lat_index, victim_way_lat, lat_tag);
+//         `endif
+//     end
+// end
+
+// // ============================================================
+// // PLRU Update Logic (same tree as ICache)
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     integer s;
+//     if (~rst_n_sync) begin
+//         for (s = 0; s < SET_NUMS; s = s + 1)
+//             plru[s] <= {PLRU_BITS{1'b0}};
+//     end
+//     else if (state == ST_REFILL_R && M_AXI_RVALID && refill_rready && M_AXI_RLAST) begin
+//         // After refill: point away from filled way
+//         case (victim_way_lat)
+//             2'd0: plru[lat_index] <= {plru[lat_index][2], 1'b1, 1'b1};
+//             2'd1: plru[lat_index] <= {plru[lat_index][2], 1'b0, 1'b1};
+//             2'd2: plru[lat_index] <= {1'b1, plru[lat_index][1], 1'b0};
+//             2'd3: plru[lat_index] <= {1'b0, plru[lat_index][1], 1'b0};
+//         endcase
+//     end
+//     else if (state == ST_IDLE && S_AXI_ARVALID && is_cacheable(S_AXI_ARADDR)) begin
+//         // On cacheable load hit: point away from hit way
+//         if ((cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag) ||
+//             (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag) ||
+//             (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag) ||
+//             (cache_valid[req_index][3] && cache_tag[req_index][3] == req_tag)) begin
+//             // Determine which way and update PLRU
+//             if      (cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag)
+//                 plru[req_index] <= {plru[req_index][2], 1'b1, 1'b1};
+//             else if (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag)
+//                 plru[req_index] <= {plru[req_index][2], 1'b0, 1'b1};
+//             else if (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag)
+//                 plru[req_index] <= {1'b1, plru[req_index][1], 1'b0};
+//             else
+//                 plru[req_index] <= {1'b0, plru[req_index][1], 1'b0};
+//         end
+//     end
+// end
+
+// // ============================================================
+// // AXI Read Address Channel (DCache → Crossbar)
+// // ============================================================
+// // In refill mode: send burst read; in bypass mode: forward LSU request
+// assign M_AXI_ARADDR  = (state == ST_REFILL_AR) ? {lat_addr[ADDR_WIDTH-1:OFFSET_BITS], {OFFSET_BITS{1'b0}}} :
+//                         (state == ST_BYPASS_AR) ? lat_addr :
+//                         {ADDR_WIDTH{1'b0}};
+
+// assign M_AXI_ARVALID = (state == ST_REFILL_AR) || (state == ST_BYPASS_AR && bypass_ar_valid);
+
+// assign M_AXI_ARLEN   = (state == ST_REFILL_AR) ? ARLEN_REFILL[7:0] : 8'd0;
+
+// assign M_AXI_ARSIZE  = (state == ST_REFILL_AR) ? 3'b010 :  // always 4 bytes for refill
+//                         lat_arsize;                          // original size for bypass
+
+// assign M_AXI_ARBURST = (state == ST_REFILL_AR) ? 2'b01 :   // INCR for refill
+//                         2'b00;                               // FIXED for single beat
+
+// assign M_AXI_ARID    = lat_arid;
+
+// // ============================================================
+// // AXI Read Data Channel (Crossbar → DCache → LSU)
+// // ============================================================
+// assign M_AXI_RREADY  = (state == ST_REFILL_R)  ? refill_rready :
+//                         (state == ST_BYPASS_R)  ? S_AXI_RREADY :
+//                         1'b0;
+
+// // Read data to LSU
+// assign S_AXI_RDATA   = (state == ST_BYPASS_R)  ? M_AXI_RDATA :
+//                         hit_resp_data;
+
+// assign S_AXI_RVALID  = (state == ST_BYPASS_R)  ? M_AXI_RVALID :
+//                         hit_resp_valid;
+
+// assign S_AXI_RLAST   = (state == ST_BYPASS_R)  ? M_AXI_RLAST :
+//                         hit_resp_valid;  // single beat response
+
+// assign S_AXI_RRESP   = (state == ST_BYPASS_R)  ? M_AXI_RRESP : 2'b00;
+// assign S_AXI_RID     = (state == ST_BYPASS_R)  ? M_AXI_RID : hit_resp_id;
+
+// // ============================================================
+// // AXI Read Address: LSU → DCache acceptance
+// // ============================================================
+// // Accept read request when idle (whether hit or miss, we latch it)
+// assign S_AXI_ARREADY = (state == ST_IDLE) && !S_AXI_AWVALID;
+
+// // ============================================================
+// // AXI Write Channels: Pass-Through (store always goes to memory)
+// // ============================================================
+// // AW channel
+// assign M_AXI_AWADDR  = S_AXI_AWADDR;
+// assign M_AXI_AWVALID = (state == ST_STORE_PASS || state == ST_IDLE) ? S_AXI_AWVALID : 1'b0;
+// assign M_AXI_AWLEN   = S_AXI_AWLEN;
+// assign M_AXI_AWSIZE  = S_AXI_AWSIZE;
+// assign M_AXI_AWBURST = S_AXI_AWBURST;
+// assign M_AXI_AWID    = S_AXI_AWID;
+
+// assign S_AXI_AWREADY = (state == ST_STORE_PASS || state == ST_IDLE) ? M_AXI_AWREADY : 1'b0;
+
+// // W channel
+// assign M_AXI_WVALID  = (state == ST_STORE_PASS) ? S_AXI_WVALID : 1'b0;
+// assign M_AXI_WDATA   = S_AXI_WDATA;
+// assign M_AXI_WSTRB   = S_AXI_WSTRB;
+// assign M_AXI_WLAST   = S_AXI_WLAST;
+
+// assign S_AXI_WREADY  = (state == ST_STORE_PASS) ? M_AXI_WREADY : 1'b0;
+
+// // B channel
+// assign M_AXI_BREADY  = (state == ST_STORE_PASS) ? S_AXI_BREADY : 1'b0;
+
+// assign S_AXI_BVALID  = (state == ST_STORE_PASS) ? M_AXI_BVALID : 1'b0;
+// assign S_AXI_BRESP   = M_AXI_BRESP;
+// assign S_AXI_BID     = M_AXI_BID;
+
+// // ============================================================
+// // Debug - Deadlock detection (guarded by DCACHE_DEBUG)
+// // ============================================================
+// `ifdef DCACHE_DEBUG
+// reg [15:0] dbg_stall_cnt;
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync)
+//         dbg_stall_cnt <= 0;
+//     else if (state != ST_IDLE) begin
+//         dbg_stall_cnt <= dbg_stall_cnt + 1;
+//         if (dbg_stall_cnt == 16'd29999) begin
+//             $display("[DCACHE] !! STALL: stuck in state %0d for 10000 cycles, addr=0x%0h",
+//                      state, lat_addr);
+//             $finish;
+//         end
+//     end
+//     else
+//         dbg_stall_cnt <= 0;
+// end
+
+// always @(posedge clock) begin
+//     if (state == ST_IDLE && S_AXI_ARVALID && is_cacheable(S_AXI_ARADDR)) begin
+//         if ((cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag) ||
+//             (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag) ||
+//             (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag) ||
+//             (cache_valid[req_index][3] && cache_tag[req_index][3] == req_tag))
+//             $display("[DCACHE] HIT   : addr=0x%0h", S_AXI_ARADDR);
+//     end
+// end
+// `endif
+
+// endmodule
+module ysyx_23060124_EXU(
+    input                               clock                      ,
+    input                               reset                      ,
+    input              [  31:0]         i_src1                     ,
+    input              [  31:0]         i_src2                     ,
+    input              [  31:0]         i_pc                       ,
+    input              [  31:0]         i_imm                      ,
+    input              [   1:0]         i_src_sel1                 ,
+    input              [   2:0]         i_src_sel2                 ,
+
+    //control signal
+    input                               i_load                     ,
+    input                               i_store                    ,
+    input                               i_brch                     ,
+    input                               i_jal                      ,
+    input                               i_jalr                     ,
+    //ecall and mret
+    input                               i_ecall                    ,
+    input                               i_mret                     ,
+    input              [   9:0]         i_alu_opt                  ,
+    input              [   2:0]         exu_opt                    ,
+
+    output             [  31:0]         o_res                      ,
+    output                              o_brch                     ,
+    output             [  31:0]         o_pc_next                  ,
+
+    //write address channel  
+    output             [  31:0]         M_AXI_AWADDR               ,
+    output                              M_AXI_AWVALID              ,
+    input                               M_AXI_AWREADY              ,
+    output             [   7:0]         M_AXI_AWLEN                ,
+    output             [   2:0]         M_AXI_AWSIZE               ,
+    output             [   1:0]         M_AXI_AWBURST              ,
+    output             [   3:0]         M_AXI_AWID                 ,
+
+    //write data channel
+    output                              M_AXI_WVALID               ,
+    input                               M_AXI_WREADY               ,
+    output             [  31:0]         M_AXI_WDATA                ,
+    output             [   3:0]         M_AXI_WSTRB                ,
+    output                              M_AXI_WLAST                ,
+
+    //read data channel
+    input              [  31:0]         M_AXI_RDATA                ,
+    input              [   1:0]         M_AXI_RRESP                ,
+    input                               M_AXI_RVALID               ,
+    output                              M_AXI_RREADY               ,
+    input              [   3:0]         M_AXI_RID                  ,
+    input                               M_AXI_RLAST                ,
+
+    //read adress channel
+    output             [  31:0]         M_AXI_ARADDR               ,
+    output                              M_AXI_ARVALID              ,
+    input                               M_AXI_ARREADY              ,
+    output             [   3:0]         M_AXI_ARID                 ,
+    output             [   7:0]         M_AXI_ARLEN                ,
+    output             [   2:0]         M_AXI_ARSIZE               ,
+    output             [   1:0]         M_AXI_ARBURST              ,
+
+    //write back channel
+    input              [   1:0]         M_AXI_BRESP                ,
+    input                               M_AXI_BVALID               ,
+    output                              M_AXI_BREADY               ,
+    input              [   3:0]         M_AXI_BID                  ,
+  //exu -> wbu handshake
+    input                               i_post_ready               ,
+    input                               i_pre_valid                ,
+    output                              o_post_valid               ,
+    output                              o_pre_ready                 
+);
+
+/******************parameter******************/
+parameter BEQ   = 3'b000;
+parameter BNE   = 3'b001;
+parameter BLT   = 3'b100;
+parameter BGE   = 3'b101;
+parameter BLTU  = 3'b110;
+parameter BGEU  = 3'b111;
+
+wire                   [  31:0]         alu_res, load_res          ;
+wire                                    if_lsu                     ;
+wire                                    lsu_done                   ;
+
+reg post_valid;
+
+assign if_lsu = i_load || i_store;
+assign o_post_valid =  if_lsu  ?  lsu_done : post_valid;
+
+assign o_pre_ready  =  if_lsu  ?  lsu_done : 1'b1;
+
+always @(posedge clock or posedge reset) begin
+    if(reset) begin
+        post_valid <= 1'b0;   
+    end
+    else post_valid <= i_pre_valid;
+end
+
+reg                  [  31:0]         alu_src1                   ;
+reg                  [  31:0]         alu_src2                   ;
+
+// always_comb begin
+//     unique case(1'b1)
+//         i_src_sel1[0]:  alu_src1 = i_src1;
+//         default: alu_src1 = i_pc;
+//     endcase
+// end
+
+// always_comb begin
+//     unique case(1'b1)
+//         i_src_sel2[0]:  alu_src2 = i_src2;
+//         i_src_sel2[1]:  alu_src2 = i_imm;
+//         i_src_sel2[2]:  alu_src2 = 32'h4;
+//         default: alu_src2 = 32'h0;
+//     endcase
+// end
+
+wire src_sel1_0 = i_src_sel1[0];
+wire src_sel2_0 = i_src_sel2[0];
+wire src_sel2_1 = i_src_sel2[1];
+wire src_sel2_2 = i_src_sel2[2];
+
+always @(*) begin
+    unique case (1'b1)
+        src_sel1_0:  alu_src1 = i_src1;
+        default:     alu_src1 = i_pc;
+    endcase
+end
+
+always @(*) begin
+    unique case (1'b1)
+        src_sel2_0:  alu_src2 = i_src2;
+        src_sel2_1:  alu_src2 = i_imm;
+        src_sel2_2:  alu_src2 = 32'h4;
+        default:     alu_src2 = 32'h0;
+    endcase
+end
+
+assign o_pc_next =    i_jal             ? i_pc    + i_imm : 
+                      i_jalr            ? i_src1  + i_imm : 
+                      i_brch            ? i_pc    + i_imm :
+                      i_ecall           ? i_src1          :
+                      i_mret            ? i_src1          : 
+                      i_pc + 4;
+
+ysyx_23060124_ALU exu_alu(
+    .src1                              (alu_src1                  ),
+    .src2                              (alu_src2                  ),
+    .opt                               (i_alu_opt                 ),
+    .res                               (alu_res                   ) 
+);
+
+ysyx_23060124_LSU exu_lsu(
+    .clock                             (clock                     ),
+    .reset                             (reset                     ),
+    .store_src                         (i_src2                    ),
+    .alu_res                           (alu_res                   ),
+    .exu_opt                           (exu_opt                   ),
+    .load_res                          (load_res                  ),
+    .i_load                            (i_load                    ),
+    .i_store                           (i_store                   ),
+  //lsu ->exu sram axi
+  //write address channel  
+    .M_AXI_AWADDR                      (M_AXI_AWADDR              ),
+    .M_AXI_AWVALID                     (M_AXI_AWVALID             ),
+    .M_AXI_AWREADY                     (M_AXI_AWREADY             ),
+    .M_AXI_AWLEN                       (M_AXI_AWLEN               ),
+    .M_AXI_AWSIZE                      (M_AXI_AWSIZE              ),
+    .M_AXI_AWBURST                     (M_AXI_AWBURST             ),
+    .M_AXI_AWID                        (M_AXI_AWID                ),
+
+  //write data channel
+    .M_AXI_WVALID                      (M_AXI_WVALID              ),
+    .M_AXI_WREADY                      (M_AXI_WREADY              ),
+    .M_AXI_WDATA                       (M_AXI_WDATA               ),
+    .M_AXI_WSTRB                       (M_AXI_WSTRB               ),
+    .M_AXI_WLAST                       (M_AXI_WLAST               ),
+  //read data channel
+    .M_AXI_RDATA                       (M_AXI_RDATA               ),
+    .M_AXI_RRESP                       (M_AXI_RRESP               ),
+    .M_AXI_RVALID                      (M_AXI_RVALID              ),
+    .M_AXI_RREADY                      (M_AXI_RREADY              ),
+    .M_AXI_RID                         (M_AXI_RID                 ),
+    .M_AXI_RLAST                       (M_AXI_RLAST               ),
+  //read adress channel
+    .M_AXI_ARADDR                      (M_AXI_ARADDR              ),
+    .M_AXI_ARVALID                     (M_AXI_ARVALID             ),
+    .M_AXI_ARREADY                     (M_AXI_ARREADY             ),
+    .M_AXI_ARID                        (M_AXI_ARID                ),
+    .M_AXI_ARLEN                       (M_AXI_ARLEN               ),
+    .M_AXI_ARSIZE                      (M_AXI_ARSIZE              ),
+    .M_AXI_ARBURST                     (M_AXI_ARBURST             ),
+  //write back channel
+    .M_AXI_BRESP                       (M_AXI_BRESP               ),
+    .M_AXI_BVALID                      (M_AXI_BVALID              ),
+    .M_AXI_BREADY                      (M_AXI_BREADY              ),
+    .M_AXI_BID                         (M_AXI_BID                 ),
+  //handshake
+    .o_pre_ready                       (o_pre_ready               ),
+    .lsu_done                          (lsu_done                  )
+);
+
+wire beq, bne;
+assign beq = (alu_src1 == alu_src2);
+assign bne = ~beq;
+reg                                     brch_res                   ;
+wire [2:0] brch_opt;
+assign brch_opt = exu_opt;
+always @(*) begin
+  case(brch_opt)
+    BEQ:  brch_res = beq;
+    BNE:  brch_res = bne;
+    BLT:  brch_res = alu_res[0] ;
+    BGE:  brch_res = ~alu_res[0] ;
+    BLTU: brch_res = alu_res[0];
+    BGEU: brch_res = ~alu_res[0];
+    default: brch_res = 1'b0;
+  endcase
+end
+assign o_res  = i_load ? load_res : alu_res;
+assign o_brch = i_brch && brch_res;
+
+endmodule
+module ysyx_23060124_exu_wbu_regs (
+    input                               clock                      ,
+    input                               reset                      ,
+    input                               i_brch                     ,
+    input                               i_jal                      ,
+    input                               i_wen                      ,
+    input                               i_csr_wen                  ,
+    //TODO: combine addr_rd and csr_addr into one input
+    //TODO: i_csr_wen adn i_wen into one input
+    input                               i_jalr                     ,
+    input                               i_ebreak                   ,
+    input                               i_mret                     ,
+    input                               i_ecall                    ,
+
+    input              [  31:0]         i_res                      ,
+    input              [  31:0]         i_pc_next                  ,
+    input              [  11:0]         i_csr_addr                 ,
+    input              [   3:0]         i_rd_addr                  ,
+
+    output reg         [  31:0]         o_pc_next                  ,
+    output reg         [  11:0]         o_csr_addr                 ,
+    output reg         [   3:0]         o_rd_addr                  , 
+    //
+    output reg                          o_wen                      ,
+    output reg                          o_csr_wen                  ,
+    //
+    output reg                          o_brch                     ,
+    output reg                          o_jal                      ,
+    output reg                          o_jalr                     ,
+    output reg                          o_mret                     ,
+    output reg                          o_ecall                    ,
+    output reg                          o_ebreak                   ,
+    //
+    output reg         [  31:0]         o_res                      ,
+    // output reg                          o_next                     ,
+    input                               i_post_ready               ,
+    input                               o_post_valid                
+);
+
+always @(posedge clock or posedge reset) begin
+    if(reset) begin
+        o_pc_next   <= 'b0; 
+        o_csr_addr  <= 'b0; 
+        o_rd_addr   <= 'b0; 
+        o_wen       <= 'b0; 
+        o_csr_wen   <= 'b0; 
+        o_brch      <= 'b0; 
+        o_jal       <= 'b0; 
+        o_jalr      <= 'b0; 
+        o_mret      <= 'b0; 
+        o_ecall     <= 'b0;  
+        o_res       <= 'b0; 
+        o_ebreak    <= 'b0;
+        // o_next      <= 'b0;
+    end
+    else if(i_post_ready && o_post_valid) begin
+        o_pc_next   <= i_pc_next;
+        o_csr_addr  <= i_csr_addr;
+        o_rd_addr   <= i_rd_addr;
+        o_wen       <= i_wen;
+        o_csr_wen   <= i_csr_wen;
+        o_brch      <= i_brch;
+        o_jal       <= i_jal;
+        o_jalr      <= i_jalr;
+        o_mret      <= i_mret;
+        o_ecall     <= i_ecall;
+        o_res       <= i_res;
+        o_ebreak    <= i_ebreak;
+        // o_next      <= 1'b1;
+    end
+    else if(i_post_ready && ~o_post_valid) begin
+        o_pc_next   <= 'b0; 
+        o_csr_addr  <= 'b0; 
+        o_rd_addr   <= 'b0; 
+        o_wen       <= 'b0; 
+        o_csr_wen   <= 'b0; 
+        o_brch      <= 'b0; 
+        o_jal       <= 'b0; 
+        o_jalr      <= 'b0; 
+        o_mret      <= 'b0; 
+        o_ecall     <= 'b0; 
+        o_res       <= 'b0; 
+        o_ebreak    <= 'b0;
+        // o_next      <= 'b0;
+    end
+end
+endmodule   
+module ysyx_23060124_LSU #(
+    parameter ADDR_WIDTH      = 32,
+    parameter DATA_WIDTH      = 32,
+    parameter SET_NUMS        = 4,
+    parameter WAY_NUMS        = 4,
+    parameter WORDS_PER_BLOCK = 4,
+    parameter CACHE_START     = 32'ha0000000,
+    parameter CACHE_END       = 32'hc0000000
+)(
+    input                               clock                      ,
+    input                               reset                      ,
+    input              [  31:0]         store_src                  ,
+    input              [  31:0]         alu_res                    ,
+    input              [   2:0]         exu_opt                    ,
+    output reg         [  31:0]         load_res                   ,
+    input                               i_load                     ,
+    input                               i_store                    ,
+
+    // AXI Write Address Channel
+    output             [  31:0]         M_AXI_AWADDR               ,
+    output                              M_AXI_AWVALID              ,
+    input                               M_AXI_AWREADY              ,
+    output             [   7:0]         M_AXI_AWLEN                ,
+    output             [   2:0]         M_AXI_AWSIZE               ,
+    output             [   1:0]         M_AXI_AWBURST              ,
+    output             [   3:0]         M_AXI_AWID                 ,
+
+    // AXI Write Data Channel
+    output                              M_AXI_WVALID               ,
+    input                               M_AXI_WREADY               ,
+    output             [  31:0]         M_AXI_WDATA                ,
+    output             [   3:0]         M_AXI_WSTRB                ,
+    output                              M_AXI_WLAST                ,
+
+    // AXI Read Data Channel
+    input              [  31:0]         M_AXI_RDATA                ,
+    input              [   1:0]         M_AXI_RRESP                ,
+    input                               M_AXI_RVALID               ,
+    output                              M_AXI_RREADY               ,
+    input              [   3:0]         M_AXI_RID                  ,
+    input                               M_AXI_RLAST                ,
+
+    // AXI Read Address Channel
+    output             [  31:0]         M_AXI_ARADDR               ,
+    output                              M_AXI_ARVALID              ,
+    input                               M_AXI_ARREADY              ,
+    output             [   3:0]         M_AXI_ARID                 ,
+    output             [   7:0]         M_AXI_ARLEN                ,
+    output             [   2:0]         M_AXI_ARSIZE               ,
+    output             [   1:0]         M_AXI_ARBURST              ,
+
+    // AXI Write Response Channel
+    input              [   1:0]         M_AXI_BRESP                ,
+    input                               M_AXI_BVALID               ,
+    output                              M_AXI_BREADY               ,
+    input              [   3:0]         M_AXI_BID                  ,
+
+    // Pipeline handshake
+    input                               o_pre_ready                ,
+    output                              lsu_done
+);
+
+// `define DCACHE_DEBUG 1
+
+// ============================================================
+// Load/Store Opcodes
+// ============================================================
+parameter LB  = 3'b000, LH  = 3'b001, LW = 3'b010;
+parameter LBU = 3'b100, LHU = 3'b101;
+parameter SB  = 3'b000, SH  = 3'b001, SW = 3'b010;
+
+// ============================================================
+// Cache Derived Parameters
+// ============================================================
+localparam BLOCK_SIZE     = 4 * WORDS_PER_BLOCK;
+localparam WORD_IDX_BITS  = $clog2(WORDS_PER_BLOCK);
+localparam INDEX_BITS     = $clog2(SET_NUMS);
+localparam OFFSET_BITS    = $clog2(BLOCK_SIZE);
+localparam TAG_BITS       = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;
+localparam PLRU_BITS      = WAY_NUMS - 1;
+localparam REFILL_ARLEN   = WORDS_PER_BLOCK - 1;
+
+// ============================================================
+// Cache Storage
+// ============================================================
+reg [DATA_WIDTH-1:0] cache_data  [SET_NUMS-1:0][WAY_NUMS-1:0][WORDS_PER_BLOCK-1:0];
+reg [TAG_BITS-1:0]   cache_tag   [SET_NUMS-1:0][WAY_NUMS-1:0];
+reg                  cache_valid [SET_NUMS-1:0][WAY_NUMS-1:0];
+reg [PLRU_BITS-1:0]  plru        [SET_NUMS-1:0];
+
+// ============================================================
+// State Machine
+// ============================================================
+localparam S_IDLE       = 4'd0;
+localparam S_CHECK      = 4'd1;   // 1-cycle: latch addr, check cache
+localparam S_CACHE_HIT  = 4'd2;   // 1-cycle: return cached data
+localparam S_REFILL_AR  = 4'd3;   // wait AR handshake (burst)
+localparam S_REFILL_R   = 4'd4;   // receive burst data
+localparam S_UNCACHE_AR = 4'd5;   // wait AR handshake (single)
+localparam S_UNCACHE_R  = 4'd6;   // receive single-beat data
+localparam S_STORE      = 4'd7;   // AW + W handshake
+localparam S_STORE_B    = 4'd8;   // wait B response
+
+reg [3:0] state;
+
+// ============================================================
+// Trigger Mechanism (preserved from original LSU)
+// ============================================================
+reg                    init_txn_ff, init_txn_ff2, o_pre_ready_d1;
+wire                   is_ls           = i_load || i_store;
+wire                   INIT_AXI_TXN   = reset ? 1'b0 : (o_pre_ready_d1 && is_ls);
+wire                   init_txn_pulse = ~init_txn_ff2 & init_txn_ff;
+wire                   txn_pulse_load  = i_load  && init_txn_pulse;
+wire                   txn_pulse_store = i_store && init_txn_pulse;
+
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        init_txn_ff    <= 1'b0;
+        init_txn_ff2   <= 1'b0;
+        o_pre_ready_d1 <= 1'b0;
+    end else begin
+        o_pre_ready_d1 <= o_pre_ready;
+        init_txn_ff    <= INIT_AXI_TXN;
+        init_txn_ff2   <= init_txn_ff;
+    end
+end
+
+// ============================================================
+// Latched Request (stable for entire operation)
+// ============================================================
+reg [31:0] lat_addr;
+reg [1:0]  lat_shift;
+reg [2:0]  lat_exu_opt;
+reg [31:0] lat_store_src;
+reg        lat_is_load;
+reg        lat_cacheable;
+
+wire [4:0] lat_shift8 = {lat_shift, 3'b0};
+
+// ============================================================
+// Address Decomposition (from latched address)
+// ============================================================
+wire [TAG_BITS-1:0]      addr_tag   = lat_addr[ADDR_WIDTH-1 : INDEX_BITS+OFFSET_BITS];
+wire [INDEX_BITS-1:0]    addr_index = lat_addr[INDEX_BITS+OFFSET_BITS-1 : OFFSET_BITS];
+wire [WORD_IDX_BITS-1:0] addr_word  = lat_addr[OFFSET_BITS-1 : 2];
+
+// ============================================================
+// Cache Hit Detection (combinational, from latched addr)
+// ============================================================
+wire w0_hit = cache_valid[addr_index][0] && (cache_tag[addr_index][0] == addr_tag);
+wire w1_hit = cache_valid[addr_index][1] && (cache_tag[addr_index][1] == addr_tag);
+wire w2_hit = cache_valid[addr_index][2] && (cache_tag[addr_index][2] == addr_tag);
+wire w3_hit = cache_valid[addr_index][3] && (cache_tag[addr_index][3] == addr_tag);
+wire cache_hit = w0_hit | w1_hit | w2_hit | w3_hit;
+
+wire [1:0] hit_way = w0_hit ? 2'd0 : w1_hit ? 2'd1 : w2_hit ? 2'd2 : 2'd3;
+
+wire [31:0] hit_word = w0_hit ? cache_data[addr_index][0][addr_word] :
+                       w1_hit ? cache_data[addr_index][1][addr_word] :
+                       w2_hit ? cache_data[addr_index][2][addr_word] :
+                                cache_data[addr_index][3][addr_word] ;
+
+// ============================================================
+// PLRU Victim Selection
+// ============================================================
+wire [1:0] victim_way = {plru[addr_index][0],
+                         plru[addr_index][0] ? plru[addr_index][2] : plru[addr_index][1]};
+reg [1:0] victim_way_lat;
+
+// ============================================================
+// Refill Control
+// ============================================================
+reg [WORD_IDX_BITS-1:0] refill_cnt;
+reg                     refill_rready;
+
+// ============================================================
+// Store Byte Strobe & Shifted Data
+// ============================================================
+wire [3:0] wstrb_base = (lat_exu_opt == SB) ? 4'b0001 :
+                       (lat_exu_opt == SH) ? 4'b0011 :
+                       (lat_exu_opt == SW) ? 4'b1111 : 4'b0000;
+wire [3:0] wstrb_shifted = wstrb_base << lat_shift;
+wire [31:0] wdata_shifted = lat_store_src << lat_shift8;
+
+// ============================================================
+// AXI Control Registers
+// ============================================================
+reg axi_arvalid, axi_awvalid, axi_wvalid, axi_bready, axi_rready;
+
+// ============================================================
+// Done Signal
+// ============================================================
+reg done_reg;
+assign lsu_done = done_reg;
+
+// ============================================================
+// AXI Output Assignments
+// ============================================================
+// AR channel
+assign M_AXI_ARADDR  = (state == S_REFILL_AR) ? {lat_addr[31:OFFSET_BITS], {OFFSET_BITS{1'b0}}} :
+                        lat_addr;  // uncached: full addr
+assign M_AXI_ARVALID = axi_arvalid;
+assign M_AXI_ARLEN   = (state == S_REFILL_AR) ? REFILL_ARLEN[7:0] : 8'd0;
+assign M_AXI_ARSIZE  = (state == S_REFILL_AR) ? 3'b010 :
+                        (lat_exu_opt[1:0] == 2'b10) ? 3'b010 :
+                        (lat_exu_opt[1:0] == 2'b01) ? 3'b001 : 3'b000;
+assign M_AXI_ARBURST = (state == S_REFILL_AR) ? 2'b01 : 2'b00;
+assign M_AXI_ARID    = 4'd0;
+
+// AW channel
+assign M_AXI_AWADDR  = lat_addr;
+assign M_AXI_AWVALID = axi_awvalid;
+assign M_AXI_AWLEN   = 8'd0;
+assign M_AXI_AWSIZE  = (lat_exu_opt == SW) ? 3'b010 :
+                       (lat_exu_opt == SH) ? 3'b001 : 3'b000;
+assign M_AXI_AWBURST = 2'b00;
+assign M_AXI_AWID    = 4'd0;
+
+// W channel
+assign M_AXI_WVALID  = axi_wvalid;
+assign M_AXI_WDATA   = wdata_shifted;
+assign M_AXI_WSTRB   = wstrb_shifted;
+assign M_AXI_WLAST   = 1'b1;
+
+// R channel
+assign M_AXI_RREADY  = (state == S_REFILL_R) ? refill_rready : axi_rready;
+
+// B channel
+assign M_AXI_BREADY  = axi_bready;
+
+// ============================================================
+// Main State Machine
+// ============================================================
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        state          <= S_IDLE;
+        lat_addr       <= 32'd0;
+        lat_shift      <= 2'd0;
+        lat_exu_opt    <= 3'd0;
+        lat_store_src  <= 32'd0;
+        lat_is_load    <= 1'b0;
+        lat_cacheable  <= 1'b0;
+        done_reg       <= 1'b0;
+        axi_arvalid    <= 1'b0;
+        axi_awvalid    <= 1'b0;
+        axi_wvalid     <= 1'b0;
+        axi_bready     <= 1'b0;
+        axi_rready     <= 1'b0;
+        victim_way_lat <= 2'd0;
+        refill_cnt     <= {WORD_IDX_BITS{1'b0}};
+        refill_rready  <= 1'b0;
+    end
+    else begin
+        done_reg <= 1'b0;  // default: clear done pulse
+
+        case (state)
+        // ─────────────────────────────────────────
+        S_IDLE: begin
+            if (txn_pulse_load || txn_pulse_store) begin
+                // Latch request
+                lat_addr      <= alu_res;
+                lat_shift     <= alu_res[1:0];
+                lat_exu_opt   <= exu_opt;
+                lat_store_src <= store_src;
+                lat_is_load   <= i_load;
+                lat_cacheable <= (alu_res >= CACHE_START && alu_res < CACHE_END);
+                state         <= S_CHECK;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_CHECK: begin
+            // Address latched last cycle, hit detection is now valid
+            if (lat_is_load) begin
+                if (lat_cacheable && cache_hit) begin
+                    state <= S_CACHE_HIT;
+                    `ifdef DCACHE_DEBUG
+                    $display("[DCACHE] LOAD HIT : set=%0d way=%0d addr=0x%0h", addr_index, hit_way, lat_addr);
+                    `endif
+                end
+                else if (lat_cacheable) begin
+                    // Miss → burst refill
+                    axi_arvalid <= 1'b1;
+                    state       <= S_REFILL_AR;
+                    `ifdef DCACHE_DEBUG
+                    $display("[DCACHE] LOAD MISS: set=%0d victim=%0d addr=0x%0h", addr_index, victim_way, lat_addr);
+                    `endif
+                end
+                else begin
+                    // Uncacheable → single-beat AXI read
+                    axi_arvalid <= 1'b1;
+                    state       <= S_UNCACHE_AR;
+                end
+            end
+            else begin
+                // Store: always write-through to AXI
+                axi_awvalid <= 1'b1;
+                axi_wvalid  <= 1'b1;
+                state       <= S_STORE;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_CACHE_HIT: begin
+            done_reg <= 1'b1;
+            state    <= S_IDLE;
+        end
+
+        // ─────────────────────────────────────────
+        S_REFILL_AR: begin
+            if (M_AXI_ARREADY && axi_arvalid) begin
+                axi_arvalid    <= 1'b0;
+                victim_way_lat <= victim_way;
+                refill_cnt     <= {WORD_IDX_BITS{1'b0}};
+                refill_rready  <= 1'b0;
+                state          <= S_REFILL_R;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_REFILL_R: begin
+            if (M_AXI_RVALID && ~refill_rready) begin
+                refill_rready <= 1'b1;
+            end
+            else if (refill_rready) begin
+                refill_rready <= 1'b0;
+                refill_cnt    <= refill_cnt + 1;
+                if (M_AXI_RLAST) begin
+                    done_reg <= 1'b1;
+                    state    <= S_IDLE;
+                end
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_UNCACHE_AR: begin
+            if (M_AXI_ARREADY && axi_arvalid) begin
+                axi_arvalid <= 1'b0;
+                axi_rready  <= 1'b0;
+                state       <= S_UNCACHE_R;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_UNCACHE_R: begin
+            if (M_AXI_RVALID && ~axi_rready) begin
+                axi_rready <= 1'b1;
+            end
+            else if (axi_rready) begin
+                axi_rready <= 1'b0;
+                done_reg   <= 1'b1;
+                state      <= S_IDLE;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_STORE: begin
+            if (M_AXI_AWREADY && axi_awvalid)
+                axi_awvalid <= 1'b0;
+            if (M_AXI_WREADY && axi_wvalid)
+                axi_wvalid <= 1'b0;
+            // Both handshakes done → wait for B
+            if (!axi_awvalid && !axi_wvalid) begin
+                state <= S_STORE_B;
+            end
+            // Handle case where one completes this cycle
+            if ((M_AXI_AWREADY || !axi_awvalid) && (M_AXI_WREADY || !axi_wvalid)) begin
+                state <= S_STORE_B;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_STORE_B: begin
+            if (M_AXI_BVALID && ~axi_bready) begin
+                axi_bready <= 1'b1;
+            end
+            else if (axi_bready) begin
+                axi_bready <= 1'b0;
+                done_reg   <= 1'b1;
+                state      <= S_IDLE;
+            end
+        end
+
+        default: state <= S_IDLE;
+        endcase
+    end
+end
+
+
+// ============================================================
+// Cache Data Write (refill + store write-through update)
+// ============================================================
+integer di, dj, dw;
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        for (di = 0; di < SET_NUMS; di = di + 1)
+            for (dj = 0; dj < WAY_NUMS; dj = dj + 1)
+                for (dw = 0; dw < WORDS_PER_BLOCK; dw = dw + 1)
+                    cache_data[di][dj][dw] <= {DATA_WIDTH{1'b0}};
+    end
+    else if (state == S_REFILL_R && M_AXI_RVALID && refill_rready) begin
+        cache_data[addr_index][victim_way_lat][refill_cnt] <= M_AXI_RDATA;
+    end
+    else if (state == S_STORE && lat_cacheable && cache_hit) begin
+        // Write-through: update cache on store hit (byte-level merge)
+        if (wstrb_shifted[0]) cache_data[addr_index][hit_way][addr_word][ 7: 0] <= wdata_shifted[ 7: 0];
+        if (wstrb_shifted[1]) cache_data[addr_index][hit_way][addr_word][15: 8] <= wdata_shifted[15: 8];
+        if (wstrb_shifted[2]) cache_data[addr_index][hit_way][addr_word][23:16] <= wdata_shifted[23:16];
+        if (wstrb_shifted[3]) cache_data[addr_index][hit_way][addr_word][31:24] <= wdata_shifted[31:24];
+    end
+end
+
+// ============================================================
+// Cache Tag & Valid Control
+// ============================================================
+integer si, wi;
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        for (si = 0; si < SET_NUMS; si = si + 1)
+            for (wi = 0; wi < WAY_NUMS; wi = wi + 1)
+                cache_valid[si][wi] <= 1'b0;
+    end
+    else if (state == S_REFILL_AR && M_AXI_ARREADY && axi_arvalid) begin
+        // AR handshake: write tag, invalidate during fill
+        cache_tag[addr_index][victim_way]   <= addr_tag;
+        cache_valid[addr_index][victim_way] <= 1'b0;
+    end
+    else if (state == S_REFILL_R && M_AXI_RVALID && refill_rready && M_AXI_RLAST) begin
+        // Refill done: validate line
+        cache_valid[addr_index][victim_way_lat] <= 1'b1;
+        `ifdef DCACHE_DEBUG
+        $display("[DCACHE] FILL OK : set=%0d way=%0d tag=0x%0h", addr_index, victim_way_lat, addr_tag);
+        `endif
+    end
+end
+
+// ============================================================
+// PLRU Update
+// ============================================================
+always @(posedge clock or posedge reset) begin
+    integer s;
+    if (reset) begin
+        for (s = 0; s < SET_NUMS; s = s + 1)
+            plru[s] <= {PLRU_BITS{1'b0}};
+    end
+    else if (state == S_REFILL_R && M_AXI_RVALID && refill_rready && M_AXI_RLAST) begin
+        case (victim_way_lat)
+            2'd0: plru[addr_index] <= {plru[addr_index][2], 1'b1, 1'b1};
+            2'd1: plru[addr_index] <= {plru[addr_index][2], 1'b0, 1'b1};
+            2'd2: plru[addr_index] <= {1'b1, plru[addr_index][1], 1'b0};
+            2'd3: plru[addr_index] <= {1'b0, plru[addr_index][1], 1'b0};
+        endcase
+    end
+    else if (state == S_CACHE_HIT) begin
+        case (hit_way)
+            2'd0: plru[addr_index] <= {plru[addr_index][2], 1'b1, 1'b1};
+            2'd1: plru[addr_index] <= {plru[addr_index][2], 1'b0, 1'b1};
+            2'd2: plru[addr_index] <= {1'b1, plru[addr_index][1], 1'b0};
+            2'd3: plru[addr_index] <= {1'b0, plru[addr_index][1], 1'b0};
+        endcase
+    end
+end
+
+// ============================================================
+// Load Result Mux (byte extract + sign extend)
+// ============================================================
+wire refill_hit_word = (state == S_REFILL_R) && M_AXI_RVALID && refill_rready && (refill_cnt == addr_word);
+wire [31:0] raw_word = (state == S_CACHE_HIT)  ? hit_word :
+                       refill_hit_word          ? M_AXI_RDATA :
+                       (state == S_REFILL_R)    ? cache_data[addr_index][victim_way_lat][addr_word] :
+                       (state == S_UNCACHE_R)   ? M_AXI_RDATA :
+                       32'b0;
+wire [31:0] shifted_data = raw_word >> lat_shift8;
+
+always @(posedge clock or posedge reset) begin
+  if (reset) begin
+    load_res <= 32'b0;
+  end
+  else begin
+    if (state == S_CACHE_HIT || state == S_REFILL_R || state == S_UNCACHE_R) begin
+      case (lat_exu_opt)
+          LB:      load_res <= {{24{shifted_data[7]}},  shifted_data[7:0]};
+          LH:      load_res <= {{16{shifted_data[15]}}, shifted_data[15:0]};
+          LW:      load_res <= shifted_data;
+          LBU:     load_res <= {24'b0, shifted_data[7:0]};
+          LHU:     load_res <= {16'b0, shifted_data[15:0]};
+          default: load_res <= 32'b0;
+      endcase
+    end
+  end
+end
+
+// ============================================================
+// Debug
+// ============================================================
+`ifdef DCACHE_DEBUG
+reg [15:0] dbg_stall_cnt;
+always @(posedge clock or posedge reset) begin
+    if (reset)
+        dbg_stall_cnt <= 0;
+    else if (state != S_IDLE && state != S_CHECK) begin
+        dbg_stall_cnt <= dbg_stall_cnt + 1;
+        if (dbg_stall_cnt == 16'd19999) begin
+            $display("[DCACHE] !! STALL: stuck in state %0d for 30000 cycles, addr=0x%0h", state, lat_addr);
+            $finish;
+        end
+    end
+    else
+        dbg_stall_cnt <= 0;
+end
+`endif
+
+endmodule
+
+module ysyx_23060124_IDU (
+    input                               clock                      ,
+    input              [  31:0]         ins                        ,
+    input                               reset                      ,
+
+    output             [  31:0]         o_imm                      ,
+    output             [   3:0]         o_rd                       ,
+    output             [   3:0]         o_rs1                      ,
+    output             [   3:0]         o_rs2                      ,
+    output             [  11:0]         o_csr_addr                 ,
+    output             [   2:0]         o_exu_opt                  ,
+    output             [   9:0]         o_alu_opt                  ,
+    output                              o_wen                      ,
+    output                              o_csr_wen                  ,
+    output             [   1:0]         o_src_sel1                 ,
+    output             [   2:0]         o_src_sel2                 ,
+
+    output                              o_mret                     ,
+    output                              o_ecall                    ,
+    output                              o_load                     ,
+    output                              o_store                    ,
+    output                              o_brch                     ,
+    output                              o_jal                      ,
+    output                              o_jalr                     ,
+    output                              o_ebreak                   ,
+    output                              o_fence_i                  
+);
+/************************parameter**********************/
+//TYPE_R_FUN3
+localparam                              ADD         =  3'b000      ;
+localparam                              SUB         =  3'b000      ;
+localparam                              SLL         =  3'b001      ;
+localparam                              SLT         =  3'b010      ;
+localparam                              SLTU        =  3'b011      ;
+localparam                              XOR         =  3'b100      ;
+localparam                              SRL_SRA     =  3'b101      ;
+localparam                              OR          =  3'b110      ;
+localparam                              AND         =  3'b111      ;
+//
+localparam                              ALU_ADD         =  10'd1   ;
+localparam                              ALU_SUB         =  10'd2   ;
+localparam                              ALU_SLL         =  10'd4   ;
+localparam                              ALU_SLT         =  10'd8   ;
+localparam                              ALU_SLTU        =  10'd16  ;
+localparam                              ALU_XOR         =  10'd32  ;
+localparam                              ALU_SRL         =  10'd64  ;
+localparam                              ALU_SRA         =  10'd512  ;
+localparam                              ALU_OR          =  10'd128 ;
+localparam                              ALU_AND         =  10'd256 ;
+
+//EXU_SRC_SEL
+localparam                              EXU_SEL_REG = 4'b0001        ;
+localparam                              EXU_SEL_IMM = 4'b0010        ;
+localparam                              EXU_SEL_PC4 = 4'b0100        ;
+localparam                              EXU_SEL_PCI = 4'b1000        ;
+//
+localparam                              SEL1_REG = 2'b01        ;
+localparam                              SEL1_PC  = 2'b10        ;
+
+localparam                              SEL2_REG = 3'b001        ;
+localparam                              SEL2_IMM = 3'b010        ;
+localparam                              SEL2_4   = 3'b100        ;
+
+
+localparam                              TYPE_I       =  7'b0010011;
+localparam                              TYPE_I_LOAD  =  7'b0000011;
+localparam                              TYPE_JALR    =  7'b1100111;
+localparam                              TYPE_EBRK    =  7'b1110011;
+localparam                              TYPE_S       =  7'b0100011;
+localparam                              TYPE_R       =  7'b0110011;
+localparam                              TYPE_AUIPC   =  7'b0010111;
+localparam                              TYPE_LUI     =  7'b0110111;
+localparam                              TYPE_JAL     =  7'b1101111;
+localparam                              TYPE_B       =  7'b1100011;
+localparam                              TYPE_FENCE   =  7'b0001111;
+//TYPE_I_FUN3
+localparam                              FUN3_SRL_SRA =  3'b101     ;
+//CSRR
+localparam                              FUN3_CSRRW = 3'b001        ;
+localparam                              FUN3_CSRRS = 3'b010        ;
+localparam                              FUN3_EXCPT = 3'b000        ;
+//TYPE_EXCPT_RS2
+localparam                              RS2_ECALL   =  5'b00000    ;
+localparam                              RS2_MRET    =  5'b00010    ;
+
+wire [2:0] func3    = ins[14:12];
+wire [6:0] opcode   = ins[6:0];
+wire [6:0] func7    = ins[31:25];
+wire [3:0] rs1      = ins[18:15];
+wire [3:0] rs2      = ins[23:20];
+wire [3:0] rd       = ins[10:7];
+
+wire TYPEI       = (opcode == TYPE_I         );
+wire TYPEI_LOAD  = (opcode == TYPE_I_LOAD    );
+wire TYPER       = (opcode == TYPE_R         );     
+wire TYPELUI     = (opcode == TYPE_LUI       );   
+wire TYPEAUIPC   = (opcode == TYPE_AUIPC     ); 
+wire TYPEJAL     = (opcode == TYPE_JAL       );   
+wire TYPEJALR    = (opcode == TYPE_JALR      );  
+wire TYPES       = (opcode == TYPE_S         );     
+wire TYPEB       = (opcode == TYPE_B         );     
+wire TYPEEBRK    = (opcode == TYPE_EBRK      );   
+
+assign o_imm = (TYPEI || TYPEI_LOAD) ? {{20{ins[31]}}, ins[31:20]} :
+               (TYPELUI || TYPEAUIPC) ? {ins[31:12], 12'b0} :
+               (TYPEJAL) ? {{12{ins[31]}}, ins[19:12], ins[20], ins[30:21], 1'b0} :
+               (TYPEJALR) ? {{20{ins[31]}}, ins[31:20]} :
+               (TYPEB) ? {{20{ins[31]}}, ins[7], ins[30:25], ins[11:8], 1'b0} :
+               (TYPES) ? {{20{ins[31]}}, ins[31:25], ins[11:7]} :
+               32'b0;
+
+assign o_rd = rd;
+
+assign o_rs1 = (TYPEAUIPC || TYPELUI ||TYPEJAL) ? 4'b0 : rs1;
+
+assign o_rs2 = (TYPER || TYPEB || TYPES) ? rs2 : 4'b0;
+
+//TODO: TYPE_I
+assign o_csr_addr = (TYPEEBRK) ? ins[31:20] : 12'b0;
+
+assign o_wen        = (TYPES || TYPEB || opcode == TYPE_FENCE) ? 1'b0 : 1'b1;
+
+assign o_csr_wen    = (TYPEEBRK && |func3);
+
+wire o_if_unsigned;
+assign o_if_unsigned =  (TYPEI && func3 == SRL_SRA && func7[5]) ? 1'b1 :
+                        (TYPER && func3 == SRL_SRA && func7[5]) ? 1'b1 :
+                        (TYPER && func3 == ADD     && func7[5]) ? 1'b1 :
+                        1'b0;
+
+assign o_exu_opt =  func3;
+wire [2:0] exu_opt;
+assign exu_opt =  (TYPEB)       ? {1'b0,func3[2:1]}:
+                  func3;
+
+assign o_alu_opt =  (TYPES)                         ? ALU_ADD  :
+                    (TYPEI_LOAD)                    ? ALU_ADD  :
+                    (TYPELUI)                       ? ALU_ADD:
+                    (TYPEAUIPC)                     ? ALU_ADD:
+                    (TYPEJAL)                       ? ALU_ADD:
+                    (TYPEEBRK && func3 == FUN3_CSRRS) ? ALU_OR:  
+                    (exu_opt ==  ADD && ~o_if_unsigned           )  ? ALU_ADD  :
+                    (exu_opt ==  SUB &&  o_if_unsigned           )  ? ALU_SUB  :
+                    (exu_opt ==  SLL           )  ? ALU_SLL  :
+                    (exu_opt ==  SLT           )  ? ALU_SLT  :
+                    (exu_opt ==  SLTU          )  ? ALU_SLTU :
+                    (exu_opt ==  XOR           )  ? ALU_XOR  :
+                    (exu_opt ==  SRL_SRA &&  o_if_unsigned      )  ? ALU_SRL  :
+                    (exu_opt ==  SRL_SRA && ~o_if_unsigned      )  ? ALU_SRA  :
+                    (exu_opt ==  OR            )  ? ALU_OR   :
+                    (exu_opt ==  AND           )  ? ALU_AND  :
+                    10'b0;
+
+assign o_src_sel1 =   (TYPEI)       ? SEL1_REG:
+                      (TYPER)       ? SEL1_REG:
+                      (TYPELUI)     ? SEL1_REG:
+                      (TYPEAUIPC)   ? SEL1_PC:
+                      (TYPEJAL)     ? SEL1_PC:
+                      (TYPEJALR)    ? SEL1_PC:
+                      (TYPEI_LOAD)  ? SEL1_REG:
+                      (TYPES)       ? SEL1_REG:
+                      (TYPEB)       ? SEL1_REG:
+                      (TYPEEBRK && func3 == FUN3_CSRRW) ? SEL1_REG:
+                      (TYPEEBRK && func3 == FUN3_CSRRS) ? SEL1_REG:
+                      'b0;
+assign o_src_sel2 =   (TYPEI)       ? SEL2_IMM:
+                      (TYPER)       ? SEL2_REG:
+                      (TYPELUI)     ? SEL2_IMM:
+                      (TYPEAUIPC)   ? SEL2_IMM:
+                      (TYPEJAL)     ? SEL2_4:
+                      (TYPEJALR)    ? SEL2_4:
+                      (TYPEI_LOAD)  ? SEL2_IMM:
+                      (TYPES)       ? SEL2_IMM:
+                      (TYPEB)       ? SEL2_REG:
+                      (TYPEEBRK && func3 == FUN3_CSRRW) ? SEL2_IMM:
+                      (TYPEEBRK && func3 == FUN3_CSRRS) ? SEL2_REG:
+                      'b0;
+                                        
+assign o_ecall      = (TYPEEBRK && func3 == 3'b0 && rs2[1:0] == 2'b00);
+assign o_mret       = (TYPEEBRK && func3 == 3'b0 && rs2[1:0] == 2'b10);
+
+assign o_load       = (TYPEI_LOAD) ?  'b1: 'b0;
+assign o_store      = (TYPES)      ?  'b1: 'b0;
+assign o_brch       = (TYPEB)      ?  'b1: 'b0;
+assign o_jal        = (TYPEJAL)    ?  'b1: 'b0;
+assign o_jalr       = (TYPEJALR)   ?  'b1: 'b0;
+assign o_fence_i    = (opcode == TYPE_FENCE)&&(func3 == 3'b001) ? 'b1: 'b0;
+assign o_ebreak     = (TYPEEBRK && func3 == 3'b0 && rs2[1:0] == 2'b01);
+
+endmodule
+module ysyx_23060124_idu_exu_regs (
+    input              [  31:0]         i_pc                       ,
+    input                               clock                      ,
+    input                               reset                      ,
+    // handshake signals
+    input                               i_pre_valid                ,
+    input                               i_post_ready               ,
+    output                              o_pre_ready                ,
+    output                              o_post_valid               ,
+
+    input              [  31:0]         i_imm                      ,
+    input              [  11:0]         i_csr_addr                 ,
+    input              [  31:0]         i_src1                     ,
+    input              [  31:0]         i_src2                     ,
+    input              [   3:0]         i_rd                       ,
+    input              [  31:0]         i_csr_rs2                  ,
+    input                               i_csr_src_sel              ,
+    /***TODO:
+    combine wen, csr_wen into one input
+    combine csr_addr rd into one input
+    ***/
+    input              [   2:0]         i_exu_opt                  ,
+    input              [   9:0]         i_alu_opt                  ,
+    input                               i_wen                      ,
+    input                               i_csr_wen                  ,
+    input              [   1:0]         i_src_sel1                 ,
+    input              [   2:0]         i_src_sel2                 ,
+    input                               i_mret                     ,
+    input                               i_ecall                    ,
+    input                               i_load                     ,
+    input                               i_store                    ,
+    input                               i_brch                     ,
+    input                               i_jal                      ,
+    input                               i_jalr                     ,
+    input                               i_fence_i                  ,
+    input                               i_ebreak                   ,
+    
+    input              [  31:0]         i_mepc                     ,
+    input              [  31:0]         i_mtvec                    ,
+
+    output reg         [  31:0]         o_pc                       ,
+    output reg         [  31:0]         o_src1                     ,
+    output reg         [  31:0]         o_src2                     ,
+    output reg         [  31:0]         o_imm                      ,
+    output reg         [   1:0]         o_src_sel1                 ,
+    output reg         [   2:0]         o_src_sel2                 ,
+    output reg         [   3:0]         o_rd                       ,
+    //
+    output reg         [  11:0]         o_csr_addr                 ,
+    output reg         [   2:0]         o_exu_opt                  ,
+    output reg         [   9:0]         o_alu_opt                  ,
+    output reg                          o_wen                      ,
+    output reg                          o_csr_wen                  ,
+    output reg                          o_mret                     ,
+    output reg                          o_ecall                    ,
+    
+    output reg                          o_load                     ,
+    output reg                          o_store                    ,
+    output reg                          o_brch                     ,
+    output reg                          o_jal                      ,
+    output reg                          o_ebreak                   ,
+    output reg                          o_fence_i,
+    //
+    output reg                          o_jalr                      
+);
+
+reg                                     post_valid                 ;
+
+assign o_post_valid = post_valid;
+assign o_pre_ready  = i_post_ready; 
+always @(posedge clock or posedge reset) begin
+    if(reset) begin
+        post_valid <= 1'b0;   
+    end
+    else if(i_pre_valid) begin
+        post_valid <= 1'b1;
+    end
+    else if(~i_pre_valid && i_post_ready && o_post_valid)begin
+        post_valid <= 1'b0;
+    end
+end
+
+
+wire                    [  31:0]         sel_src1                   ;
+wire                    [  31:0]         sel_src2                   ;
+
+assign sel_src1 =   ({32{i_ecall}}& i_mtvec )|
+                    ({32{i_mret}} & i_mepc  )|
+                    i_src1;
+
+assign sel_src2 =   ({32{i_csr_src_sel}} & i_csr_rs2) | i_src2;
+
+always @(posedge clock or posedge reset) begin
+    if(reset) begin
+        o_pc            <= 32'b0;
+        o_src1          <= 32'b0;
+        o_src2          <= 32'b0;
+        o_imm           <= 32'b0;
+        o_src_sel1      <= 2'b0;
+        o_src_sel2      <= 3'b0;
+        o_rd            <= 4'b0;
+        o_exu_opt       <= 3'b0;
+        o_alu_opt       <= 10'b0;
+        o_wen           <= 1'b0;
+        o_csr_wen       <= 1'b0;
+        o_mret          <= 1'b0;
+        o_ecall         <= 1'b0;
+        o_load          <= 1'b0;
+        o_store         <= 1'b0;
+        o_brch          <= 1'b0;
+        o_jal           <= 1'b0;
+        o_jalr          <= 1'b0;
+        o_ebreak        <= 1'b0;
+        o_fence_i       <= 1'b0;    
+        //
+        o_csr_addr      <= 12'b0;
+
+    end
+    else if(i_post_ready && o_post_valid) begin
+        o_pc            <= i_pc;
+        o_src1          <= sel_src1;
+        o_src2          <= sel_src2;
+        o_imm           <= i_imm;
+        o_src_sel1      <= i_src_sel1;
+        o_src_sel2      <= i_src_sel2;
+
+        o_rd            <= i_rd;
+        o_exu_opt       <= i_exu_opt;
+        o_alu_opt       <= i_alu_opt;
+        o_wen           <= i_wen;
+        o_csr_wen       <= i_csr_wen;
+        o_mret          <= i_mret;
+        o_ecall         <= i_ecall;
+        o_load          <= i_load;
+        o_store         <= i_store;
+        o_brch          <= i_brch;
+        o_jal           <= i_jal;
+        o_jalr          <= i_jalr;
+        o_ebreak        <= i_ebreak;
+        o_fence_i       <= i_fence_i;
+        o_csr_addr      <= i_csr_addr;
+
+    end
+    else if(i_post_ready && ~o_post_valid) begin
+        o_pc            <= 32'b0;
+        o_src1          <= 32'b0;
+        o_src2          <= 32'b0;
+        o_imm           <= 32'b0;
+        //TODO:
+        o_src_sel1      <= 2'b0;
+        o_src_sel2      <= 3'b0;
+        o_rd            <= 4'b0;
+        o_exu_opt       <= 3'b0;
+        o_alu_opt       <= 10'b0;
+        o_wen           <= 1'b0;
+        o_csr_wen       <= 1'b0;
+        o_mret          <= 1'b0;
+        o_ecall         <= 1'b0;
+        o_load          <= 1'b0;
+        o_store         <= 1'b0;
+        o_brch          <= 1'b0;
+        o_jal           <= 1'b0;
+        o_jalr          <= 1'b0;
+        o_ebreak        <= 1'b0;
+        o_fence_i       <= 1'b0;    
+        //
+        o_csr_addr      <= 12'b0;
+    end
+end
+
+// import "DPI-C" function void load_cnt_dpic   ();
+// import "DPI-C" function void store_cnt_dpic  ();
+
+// always @(posedge clock) begin
+//   if(i_post_ready && o_post_valid && i_load) begin
+//     load_cnt_dpic();
+//   end
+//   if(i_post_ready && o_post_valid && i_store) begin
+//     store_cnt_dpic();
+//   end
+// end
+
+endmodule   
+module ysyx_23060124__icache #(
+    parameter                           ADDR_WIDTH      = 32       ,
+    parameter                           DATA_WIDTH      = 32       ,
+    parameter                           SET_NUMS        = 4        ,// Number of cache sets
+    parameter                           WAY_NUMS        = 4        ,// Number of ways (associativity)
+    parameter                           WORDS_PER_BLOCK = 4         // Number of 32-bit words per block (16 bytes)
+)
+(
+    //read data channel
+    input              [  31:0]         M_AXI_RDATA                ,
+    input              [   1:0]         M_AXI_RRESP                ,
+    input                               M_AXI_RVALID               ,
+    output                              M_AXI_RREADY               ,
+    input              [   3:0]         M_AXI_RID                  ,
+    input                               M_AXI_RLAST                ,
+
+    //read address channel
+    output             [  31:0]         M_AXI_ARADDR               ,
+    output                              M_AXI_ARVALID              ,
+    input                               M_AXI_ARREADY              ,
+    output             [   3:0]         M_AXI_ARID                 ,
+    output             [   7:0]         M_AXI_ARLEN                ,
+    output             [   2:0]         M_AXI_ARSIZE               ,
+    output             [   1:0]         M_AXI_ARBURST              ,
+
+    input                               clock                      ,
+    input                               rst_n_sync                 ,
+    input              [ADDR_WIDTH-1:0] addr                       ,
+    output             [DATA_WIDTH-1:0] data                       ,
+
+    input                               fence_i                    ,
+    output                              hit
+);
+// `define ICACHE_DEBUG  1
+
+// ============================================================
+// Local Parameters
+// ============================================================
+localparam BLOCK_SIZE    = 4 * WORDS_PER_BLOCK;              // Block size in bytes
+localparam ARLEN         = BLOCK_SIZE / 4 - 1;               // AXI burst length (transfers - 1)
+localparam WORD_IDX_BITS = $clog2(WORDS_PER_BLOCK);          // Bits to index word within block
+localparam INDEX_BITS    = $clog2(SET_NUMS);                 // Bits for set index
+localparam OFFSET_BITS   = $clog2(BLOCK_SIZE);               // Bits for byte offset within block
+localparam TAG_BITS      = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS; // Tag bits
+// With defaults: OFFSET_BITS=4, INDEX_BITS=2, TAG_BITS=26
+
+// ============================================================
+// Cache Storage  [set][way]
+// ============================================================
+reg [DATA_WIDTH-1:0] cache_data  [SET_NUMS-1:0][WAY_NUMS-1:0][WORDS_PER_BLOCK-1:0];
+reg [TAG_BITS-1:0]   cache_tag   [SET_NUMS-1:0][WAY_NUMS-1:0];
+reg                  cache_valid [SET_NUMS-1:0][WAY_NUMS-1:0];
+
+// ============================================================
+// PLRU State  (3 bits per set, binary tree for 4 ways)
+//
+//        plru[0]
+//       /       \
+//   plru[1]   plru[2]
+//   /   \     /   \
+//  W0   W1   W2   W3
+//
+// plru[b]=0 means "left subtree is LRU (victim side)"
+// plru[s][0]=b0 (top), [1]=b1 (left child), [2]=b2 (right child)
+// Victim = { b0, b0 ? b2 : b1 }  → b0=0 picks left half, b0=1 picks right half
+// ============================================================
+
+reg [WAY_NUMS-2:0] plru [SET_NUMS-1:0]; // 3 bits per set
+
+// ============================================================
+// AXI Control Registers
+// ============================================================
+reg                              axi_arvalid;
+reg                              axi_rready;
+reg [WORD_IDX_BITS-1:0]          read_index;  // Word counter during burst
+reg [ADDR_WIDTH-1-OFFSET_BITS:0] araddr;      // Latched miss address (no offset)
+reg                              idle;
+
+// ============================================================
+// Deadlock Detection (debug only)
+// ============================================================
+`ifdef ICACHE_DEBUG
+reg [15:0] ar_stall_cnt;   // counts cycles where ARVALID=1 but ARREADY=0
+reg [15:0] r_stall_cnt;    // counts cycles where idle=0 but RVALID=0
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        ar_stall_cnt <= 0;
+        r_stall_cnt  <= 0;
+    end else begin
+        // AR channel deadlock: ARVALID asserted but slave never responds
+        if (axi_arvalid && ~M_AXI_ARREADY) begin
+            ar_stall_cnt <= ar_stall_cnt + 1;
+            if (ar_stall_cnt == 999)
+                $display("[ICACHE] !! AR DEADLOCK: ARVALID stuck for 1000 cycles, addr=0x%0h",
+                         {araddr, {OFFSET_BITS{1'b0}}});
+        end else begin
+            ar_stall_cnt <= 0;
+        end
+        // R channel deadlock: refill started but data never comes
+        if (~idle && ~M_AXI_RVALID && ~axi_arvalid) begin
+            r_stall_cnt <= r_stall_cnt + 1;
+            if (r_stall_cnt == 999)
+                $display("[ICACHE] !! R DEADLOCK: waiting for RVALID for 1000 cycles, addr=0x%0h",
+                         {araddr, {OFFSET_BITS{1'b0}}});
+        end else begin
+            r_stall_cnt <= 0;
+        end
+    end
+end
+`endif
+// ============================================================
+// AXI Output Assignments
+// ============================================================
+assign M_AXI_ARADDR  = {araddr, {OFFSET_BITS{1'b0}}};
+assign M_AXI_ARVALID = axi_arvalid;
+assign M_AXI_ARID    = 4'b0;
+assign M_AXI_ARLEN   = ARLEN[7:0];
+assign M_AXI_ARSIZE  = 3'b010;   // 4 bytes per beat
+assign M_AXI_ARBURST = 2'b01;    // INCR
+assign M_AXI_RREADY  = axi_rready;
+
+// ============================================================
+// Address Decomposition  (from latched araddr, offset stripped)
+// ============================================================
+wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1 : INDEX_BITS];
+wire [INDEX_BITS-1:0] index = araddr[INDEX_BITS-1 : 0];
+
+// ============================================================
+// Hit Detection  (combinational, from live addr)
+// ============================================================
+wire [TAG_BITS-1:0]    hit_tag    = addr[ADDR_WIDTH-1              : INDEX_BITS + OFFSET_BITS];
+wire [INDEX_BITS-1:0]  hit_index  = addr[INDEX_BITS + OFFSET_BITS-1 : OFFSET_BITS];
+wire [OFFSET_BITS-1:0] hit_offset = addr[OFFSET_BITS-1             : 0];
+
+wire hit_way0 = cache_valid[hit_index][0] && (cache_tag[hit_index][0] == hit_tag);
+wire hit_way1 = cache_valid[hit_index][1] && (cache_tag[hit_index][1] == hit_tag);
+wire hit_way2 = cache_valid[hit_index][2] && (cache_tag[hit_index][2] == hit_tag);
+wire hit_way3 = cache_valid[hit_index][3] && (cache_tag[hit_index][3] == hit_tag);
+
+assign hit = hit_way0 | hit_way1 | hit_way2 | hit_way3;
+
+// Which way hit? (one-hot → 2-bit encoding)
+wire [1:0] hit_way_sel = hit_way0 ? 2'd0 :
+                         hit_way1 ? 2'd1 :
+                         hit_way2 ? 2'd2 : 2'd3;
+
+// Output data mux
+assign data = hit_way0 ? cache_data[hit_index][0][hit_offset[OFFSET_BITS-1:2]] :
+              hit_way1 ? cache_data[hit_index][1][hit_offset[OFFSET_BITS-1:2]] :
+              hit_way2 ? cache_data[hit_index][2][hit_offset[OFFSET_BITS-1:2]] :
+                         cache_data[hit_index][3][hit_offset[OFFSET_BITS-1:2]] ;
+
+// ============================================================
+// Victim Way Selection  (PLRU tree for latched index)
+//   victim = { plru[0], plru[0] ? plru[2] : plru[1] }
+// ============================================================
+wire [1:0] victim_way = {plru[index][0],
+                         plru[index][0] ? plru[index][2] : plru[index][1]};
+// victim_way is COMBINATIONAL — only use it to determine the next victim.
+// During a refill, always use victim_way_lat (latched at AR handshake).
+reg [1:0] victim_way_lat; // latched at AR handshake, stable for entire burst
+
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync)
+        victim_way_lat <= 2'd0;
+    else if (M_AXI_ARVALID && M_AXI_ARREADY)
+        victim_way_lat <= victim_way;  // lock in BEFORE burst data arrives
+end
+
+// ============================================================
+// PLRU Update Logic
+//   On hit (way w): point the tree away from w
+//     b[0]    <= ~w[1]          (top: point to opposite half)
+//     b[~w[1]]: already correct, update the leaf pointer
+//     b[w[1]+1] <= ~w[0]        (mid: point to opposite leaf)
+//
+//  plru stored as {b2, b1, b0} → index [2]=b2, [1]=b1, [0]=b0
+//   hit W0 (00): b0<=1, b1<=1 → {b2, 1, 1}
+//   hit W1 (01): b0<=1, b1<=0 → {b2, 0, 1}
+//   hit W2 (10): b0<=0, b2<=1 → {1, b1, 0}
+//   hit W3 (11): b0<=0, b2<=0 → {0, b1, 0}
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    integer s;
+    if (~rst_n_sync) begin
+        for (s = 0; s < SET_NUMS; s = s + 1)
+            plru[s] <= 3'b0;
+    end
+    else if (fence_i) begin
+        for (s = 0; s < SET_NUMS; s = s + 1)
+            plru[s] <= 3'b0;
+    end
+    else if (M_AXI_RLAST && M_AXI_RVALID && axi_rready) begin
+        // Refill 完成，更新 victim way 的 PLRU (使用锁存值)
+        case (victim_way_lat)
+            2'd0: plru[index] <= {plru[index][2], 1'b1, 1'b1};
+            2'd1: plru[index] <= {plru[index][2], 1'b0, 1'b1};
+            2'd2: plru[index] <= {1'b1, plru[index][1], 1'b0};
+            2'd3: plru[index] <= {1'b0, plru[index][1], 1'b0};
+        endcase
+    end
+    else if (hit) begin
+        // Cache hit，更新 PLRU
+        case (hit_way_sel)
+            2'd0: plru[hit_index] <= {plru[hit_index][2], 1'b1, 1'b1};
+            2'd1: plru[hit_index] <= {plru[hit_index][2], 1'b0, 1'b1};
+            2'd2: plru[hit_index] <= {1'b1, plru[hit_index][1], 1'b0};
+            2'd3: plru[hit_index] <= {1'b0, plru[hit_index][1], 1'b0};
+        endcase
+    end
+end
+
+
+// ============================================================
+// Cache Tag & Valid Control
+// ============================================================
+integer si, wi;
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        for (si = 0; si < SET_NUMS; si = si + 1)
+            for (wi = 0; wi < WAY_NUMS; wi = wi + 1)
+                cache_valid[si][wi] <= 1'b0;
+    end
+    else if (fence_i && idle) begin
+        for (si = 0; si < SET_NUMS; si = si + 1)
+            for (wi = 0; wi < WAY_NUMS; wi = wi + 1)
+                cache_valid[si][wi] <= 1'b0;
+        `ifdef ICACHE_DEBUG
+        $display("[ICACHE] FENCE.I: all valid cleared");
+        `endif
+    end
+    else if (M_AXI_ARVALID && M_AXI_ARREADY) begin
+        // AR 握手：写 tag，用组合 victim_way（将同时被锁存到 victim_way_lat）
+        cache_tag[index][victim_way]   <= tag;
+        cache_valid[index][victim_way] <= 1'b0;
+        `ifdef ICACHE_DEBUG
+        $display("[ICACHE] MISS  : set=%0d way=%0d tag=0x%0h addr=0x%0h",
+                 index, victim_way, tag, {araddr, {OFFSET_BITS{1'b0}}});
+        `endif
+    end
+    else if (M_AXI_RLAST && M_AXI_RVALID && axi_rready) begin
+        // RLAST：用锁存值 victim_way_lat，确保与 AR 握手时一致
+        cache_valid[index][victim_way_lat] <= 1'b1;
+        `ifdef ICACHE_DEBUG
+        $display("[ICACHE] FILL OK: set=%0d way=%0d tag=0x%0h",
+                 index, victim_way_lat, tag);
+        `endif
+    end
+end
+
+// ============================================================
+// Address Latch & Idle Control
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        araddr <= {(ADDR_WIDTH-OFFSET_BITS){1'b0}};
+        idle   <= 1'b1;
+    end
+    else if (!hit && idle) begin
+        araddr <= addr[ADDR_WIDTH-1 : OFFSET_BITS];
+        idle   <= 1'b0;
+    end
+    else if (M_AXI_RLAST && M_AXI_RREADY) begin
+        if (hit) begin
+            araddr <= {(ADDR_WIDTH-OFFSET_BITS){1'b0}};
+            idle   <= 1'b1;
+        end
+        else begin
+            araddr <= addr[ADDR_WIDTH-1 : OFFSET_BITS];
+        end
+    end
+end
+
+// ============================================================
+// Read Address Channel — AR handshake
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        axi_arvalid <= 1'b0;
+    end
+    else if (!hit && idle) begin
+        axi_arvalid <= 1'b1;
+    end
+    else if (axi_arvalid && M_AXI_ARREADY) begin
+        axi_arvalid <= 1'b0;
+    end
+    else if (M_AXI_RLAST && M_AXI_RREADY && !hit) begin
+        axi_arvalid <= 1'b1;
+    end
+end
+
+// ============================================================
+// Read Data Channel — R handshake
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        axi_rready <= 1'b0;
+    end
+    else if (M_AXI_RVALID && ~axi_rready) begin
+        // 每拍数据到来时 assert 一个周期
+        axi_rready <= 1'b1;
+    end
+    else if (axi_rready) begin
+        axi_rready <= 1'b0;
+    end
+end
+
+
+// ============================================================
+// Burst Word Counter (read_index)
+// ============================================================
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        read_index <= {WORD_IDX_BITS{1'b0}};
+    end
+    else if (M_AXI_ARVALID && M_AXI_ARREADY) begin
+        read_index <= {WORD_IDX_BITS{1'b0}};
+    end
+    else if (M_AXI_RVALID && axi_rready) begin
+        read_index <= read_index + 1;
+    end
+end
+
+
+// ============================================================
+// Cache Data Write (burst fill into victim way)
+// ============================================================
+integer di, dj, dw;
+always @(posedge clock or negedge rst_n_sync) begin
+    if (~rst_n_sync) begin
+        for (di = 0; di < SET_NUMS; di = di + 1)
+            for (dj = 0; dj < WAY_NUMS; dj = dj + 1)
+                for (dw = 0; dw < WORDS_PER_BLOCK; dw = dw + 1)
+                    cache_data[di][dj][dw] <= {DATA_WIDTH{1'b0}};
+    end
+    else if (M_AXI_RVALID && axi_rready) begin
+        cache_data[index][victim_way_lat][read_index] <= M_AXI_RDATA;
+    end
+end
+
+
+`ifdef ICACHE_DEBUG
+always @(posedge clock) begin
+    if (hit)
+        $display("[ICACHE] HIT   : set=%0d way=%0d tag=0x%0h addr=0x%0h",
+                 hit_index, hit_way_sel, hit_tag, addr);
+end
+`endif
+
+endmodule
+// module ysyx_23060124__icache #(
+//     parameter                           ADDR_WIDTH      = 32       ,
+//     parameter                           DATA_WIDTH      = 32       ,
+//     parameter                           SET_NUMS        = 4        ,// Number of cache sets
+//     parameter                           WORDS_PER_BLOCK = 4         // Number of 32-bit words per block
+// )
+// (
+//     //read data channel
+//     input              [  31:0]         M_AXI_RDATA                ,
+//     input              [   1:0]         M_AXI_RRESP                ,
+//     input                               M_AXI_RVALID               ,
+//     output                              M_AXI_RREADY               ,
+//     input              [   3:0]         M_AXI_RID                  ,
+//     input                               M_AXI_RLAST                ,
+
+//     //read address channel
+//     output             [  31:0]         M_AXI_ARADDR               ,
+//     output                              M_AXI_ARVALID              ,
+//     input                               M_AXI_ARREADY              ,
+//     output             [   3:0]         M_AXI_ARID                 ,
+//     output             [   7:0]         M_AXI_ARLEN                ,
+//     output             [   2:0]         M_AXI_ARSIZE               ,
+//     output             [   1:0]         M_AXI_ARBURST              ,
+
+//     input                               clock                      ,
+//     input                               rst_n_sync                 ,
+//     input              [ADDR_WIDTH-1:0] addr                       ,
+//     output             [DATA_WIDTH-1:0] data                       ,
+
+//     input                               fence_i                    ,
+//     output                              hit                         
+// );
+
+// // ============================================================
+// // Local Parameters
+// // ============================================================
+// localparam BLOCK_SIZE     = 4 * WORDS_PER_BLOCK;              // Block size in bytes (4 bytes/word * N words)
+// localparam ARLEN          = BLOCK_SIZE / 4 - 1;               // AXI burst length (number of transfers - 1)
+// localparam WORD_IDX_BITS  = $clog2(WORDS_PER_BLOCK);          // Bits to index a word within a block
+// localparam INDEX_BITS     = $clog2(SET_NUMS);                 // Bits for set index: log2(SET_NUMS)
+// localparam OFFSET_BITS    = $clog2(BLOCK_SIZE);               // Bits for byte offset within block: log2(BLOCK_SIZE)
+// localparam TAG_BITS       = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS; // Remaining bits for tag
+
+// // ============================================================
+// // Cache Storage
+// // ============================================================
+// // cache_data[set][word] — each entry is DATA_WIDTH bits
+// reg [DATA_WIDTH-1:0]  cache_data  [SET_NUMS-1:0][WORDS_PER_BLOCK-1:0];
+// reg [TAG_BITS-1:0]    cache_tag   [SET_NUMS-1:0];
+// reg [SET_NUMS-1:0]    cache_valid;
+
+// // ============================================================
+// // AXI Control Registers
+// // ============================================================
+// reg                             axi_arvalid;
+// reg                             axi_rready;
+// reg [WORD_IDX_BITS-1:0]         read_index;          // Word counter during burst read
+// reg [ADDR_WIDTH-1-OFFSET_BITS:0] araddr;             // Latched address (tag + index portion)
+// reg                             idle;                // FSM idle flag
+
+// // ============================================================
+// // AXI Output Assignments
+// // ============================================================
+// assign M_AXI_ARADDR  = {araddr, {OFFSET_BITS{1'b0}}};
+// assign M_AXI_ARVALID = axi_arvalid;
+// assign M_AXI_ARID    = 4'b0;
+// assign M_AXI_ARLEN   = ARLEN[7:0];
+// assign M_AXI_ARSIZE  = 3'b010;       // 4 bytes per transfer
+// assign M_AXI_ARBURST = 2'b01;        // INCR burst
+// assign M_AXI_RREADY  = axi_rready;
+
+// // ============================================================
+// // Address Decomposition (from latched araddr, offset bits already removed)
+// // ============================================================
+// wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1 : INDEX_BITS];
+// wire [INDEX_BITS-1:0] index = araddr[INDEX_BITS-1 : 0];
+
+// // ============================================================
+// // Cache Tag & Valid Control
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         cache_valid <= {SET_NUMS{1'b0}};
+//     end
+//     else if (M_AXI_ARVALID && ~M_AXI_ARREADY) begin
+//         // Refill starting: latch new tag, invalidate the set
+//         cache_tag[index]   <= tag;
+//         cache_valid[index] <= 1'b0;
+//     end
+//     else if (M_AXI_RLAST) begin
+//         // Refill complete: mark set as valid
+//         cache_valid[index] <= 1'b1;
+//     end
+//     else if (fence_i) begin
+//         // FENCE.I: invalidate entire cache
+//         cache_valid <= {SET_NUMS{1'b0}};
+//     end
+// end
+
+// // ============================================================
+// // Address Latch & Idle Control
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         araddr <= {(ADDR_WIDTH-OFFSET_BITS){1'b0}};
+//         idle   <= 1'b1;
+//     end
+//     else if (!hit && idle) begin
+//         // Miss detected: latch the request address
+//         araddr <= addr[ADDR_WIDTH-1 : OFFSET_BITS];
+//         idle   <= 1'b0;
+//     end
+//     else if (M_AXI_RLAST && M_AXI_RREADY) begin
+//         if (hit) begin
+//             // Refill done and new addr hits: go idle
+//             araddr <= {(ADDR_WIDTH-OFFSET_BITS){1'b0}};
+//             idle   <= 1'b1;
+//         end
+//         else begin
+//             // Refill done but new addr misses: latch new address immediately
+//             araddr <= addr[ADDR_WIDTH-1 : OFFSET_BITS];
+//         end
+//     end
+// end
+
+// // ============================================================
+// // Read Address Channel — AR handshake
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         axi_arvalid <= 1'b0;
+//     end
+//     else if (!hit && idle) begin
+//         // Cache miss: issue read request
+//         axi_arvalid <= 1'b1;
+//     end
+//     else if (axi_arvalid && M_AXI_ARREADY) begin
+//         // AR accepted by slave: deassert
+//         axi_arvalid <= 1'b0;
+//     end
+//     else if (M_AXI_RLAST && M_AXI_RREADY && !hit) begin
+//         // Refill done but still missing: issue another request
+//         axi_arvalid <= 1'b1;
+//     end
+// end
+
+// // ============================================================
+// // Burst Word Counter (read_index)
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         read_index <= {WORD_IDX_BITS{1'b0}};
+//     end
+//     else if (M_AXI_ARVALID && M_AXI_ARREADY) begin
+//         // AR handshake done: reset counter for new burst
+//         read_index <= {WORD_IDX_BITS{1'b0}};
+//     end
+//     else if (M_AXI_RVALID && ~M_AXI_RREADY) begin
+//         // Accept a data beat: advance word counter
+//         read_index <= read_index + 1;
+//     end
+// end
+
+// // ============================================================
+// // Read Data Channel — R handshake
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         axi_rready <= 1'b0;
+//     end
+//     else if (M_AXI_RVALID && ~axi_rready) begin
+//         // Data available: assert ready for one cycle
+//         axi_rready <= 1'b1;
+//     end
+//     else if (axi_rready) begin
+//         // Deassert after one clock cycle
+//         axi_rready <= 1'b0;
+//     end
+// end
+
+// // ============================================================
+// // Cache Data Write (burst fill)
+// // ============================================================
+// integer i, j;
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         for (i = 0; i < SET_NUMS; i = i + 1) begin
+//             for (j = 0; j < WORDS_PER_BLOCK; j = j + 1) begin
+//                 cache_data[i][j] <= {DATA_WIDTH{1'b0}};
+//             end
+//         end
+//     end
+//     else if (M_AXI_RVALID && ~axi_rready) begin
+//         // Write received word into the correct set and word position
+//         cache_data[index][read_index] <= M_AXI_RDATA;
+//     end
+// end
+
+// // ============================================================
+// // Hit Detection (combinational, from live addr)
+// // ============================================================
+// wire [TAG_BITS-1:0]    hit_tag    = addr[ADDR_WIDTH-1             : INDEX_BITS + OFFSET_BITS];
+// wire [INDEX_BITS-1:0]  hit_index  = addr[INDEX_BITS+OFFSET_BITS-1 : OFFSET_BITS];
+// wire [OFFSET_BITS-1:0] hit_offset = addr[OFFSET_BITS-1            : 0];
+
+// assign hit  = cache_valid[hit_index] && (cache_tag[hit_index] == hit_tag);
+// assign data = cache_data[hit_index][hit_offset[OFFSET_BITS-1:2]];
+
+// endmodule
+module ysyx_23060124_IFU
+(
+    input              [  31:0]         i_pc_next                  ,
+    input                               clock                      ,
+    input                               rst_n_sync                 ,
+    input                               i_pc_update                ,
+    input                               i_post_ready               ,
+    output             [  31:0]         ins                        ,
+    output reg         [  31:0]         pc_next                    ,
+    //ifu_to_cache
+    output             [  31:0]         req_addr                   ,
+    input              [  31:0]         icache_ins                 ,
+    input                               hit                         
+);
+
+localparam                              RESET_PC = 32'h3000_0000   ;
+
+assign req_addr = pc_next;
+
+always @(posedge  clock or negedge rst_n_sync) begin
+  if (~rst_n_sync) pc_next <= RESET_PC;
+  else if(i_pc_update) pc_next <= i_pc_next;
+  else if(hit && i_post_ready) pc_next <= pc_next + 4;
+  else pc_next <= pc_next;
+end
+
+assign ins = icache_ins;
+
+endmodule
+module ysyx_23060124_ifu_idu_regs (
+    input              [  31:0]         i_pc                       ,
+    input              [  31:0]         i_ins                      ,
+    output reg         [  31:0]         o_pc                       ,
+    output reg         [  31:0]         o_ins                      ,
+    input                               clock                      ,
+    input                               reset                      ,
+    // handshake signals
+    input                               icache_hit              ,
+    input                               i_pre_valid                ,
+    input                               i_post_ready               ,
+    output                              o_post_valid                
+
+);
+
+reg post_valid;
+assign o_post_valid = i_post_ready && icache_hit;
+
+// always @(posedge clock or posedge reset) begin
+//     if(reset) begin
+//         post_valid <= 1'b0;   
+//     end
+//     else if(icache_hit) begin
+//         post_valid <= 1'b1;
+//     end
+//     else if(~icache_hit)begin
+//         post_valid <= 1'b0;
+//     end
+// end
+
+
+always @(posedge clock or posedge reset) begin
+    if(reset) begin
+        o_pc <= 32'h0;
+        o_ins <= 32'h0;
+    end
+    else if(icache_hit && i_post_ready) begin
+        o_pc <= i_pc;
+        o_ins <= i_ins;
+    end
+    else if(~icache_hit && i_post_ready) begin
+        o_pc <= 32'h0;
+        o_ins <= 32'h0;
+    end
+    else if(icache_hit && ~i_post_ready) begin
+        o_pc <= o_pc;
+        o_ins <= o_ins;
+    end
+end
+
+endmodule   
+module CLINT(
+    input                               clock                      ,
+    input                               reset                      ,
+    //read data channel
+    output             [  31:0]         S_AXI_RDATA                ,
+    output             [   1:0]         S_AXI_RRESP                ,
+    output                              S_AXI_RVALID               ,
+    input                               S_AXI_RREADY               ,
+    output                              S_AXI_RLAST                ,
+    output             [   3:0]         S_AXI_RID                  ,
+
+    //read adress channel
+    input                               S_AXI_ARADDR               ,
+    input                               S_AXI_ARVALID              ,
+    output                              S_AXI_ARREADY              ,
+    input              [   3:0]         S_AXI_ARID                 ,
+    input              [   7:0]         S_AXI_ARLEN                ,
+    input              [   2:0]         S_AXI_ARSIZE               ,
+    input              [   1:0]         S_AXI_ARBURST              
+);
+
+/**********************regs******************************/
+wire                   [  63:0]         reg_mtime                  ;
+reg axi_raddr;
+
+assign S_AXI_ARREADY    = 1'b1;
+assign S_AXI_RRESP      = 2'b0;
+assign S_AXI_RVALID     = 1'b1;
+assign S_AXI_RLAST      = 1'b1;
+assign S_AXI_RID        = 4'b0;
+
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        axi_raddr <= 1'b0;
+    end
+    else begin
+        axi_raddr <= S_AXI_ARADDR;
+    end
+end
+Reg  #(.WIDTH(64), .RESET_VAL(64'b0)) mtime_reg
+(
+    .clk(clock),
+    .rst(reset),
+    .din(reg_mtime+1),
+    .dout(reg_mtime)
+);
+ 
+assign S_AXI_RDATA = axi_raddr ? reg_mtime[63 : 32] : reg_mtime[31 : 0];
+
+endmodule
+
+module Reg #( parameter WIDTH = 1, 
+              parameter RESET_VAL = 0) 
+(
+  input clk,
+  input rst,
+  input [WIDTH-1:0] din,
+  output reg [WIDTH-1:0] dout
+);
+  always @(posedge clk or posedge rst) begin
+    if (rst) dout <= RESET_VAL;
+    else dout <= din;
+  end
+
+endmodule
+module ysyx_23060124_stdrst(
+  input clock,
+  input i_rst_n,
+  output o_rst_n_sync
+);
+  reg [10:0] shift_reg;
+  always @(posedge clock or posedge i_rst_n) begin
+    if (i_rst_n) begin
+      shift_reg <= 11'b0;
+    end else begin
+      shift_reg <= {shift_reg[9:0], 1'b1};
+    end
+  end
+
+  assign o_rst_n_sync = shift_reg[10];
+
+endmodule
 module ysyx_23060124_Xbar(
     input                               clock                      ,
     input                               RESETN                      ,
@@ -107,7 +2823,7 @@ wire lsu_ram_finish;
 assign ifu_req = IFU_ARVALID;
 assign lsu_req = LSU_AWVALID || LSU_ARVALID;
 assign ifu_ram_finish = (SRAM_RLAST && IFU_RREADY);
-assign lsu_ram_finish = SRAM_BREADY || LSU_RREADY;
+assign lsu_ram_finish = (SRAM_BVALID && LSU_BREADY) || (SRAM_RLAST && LSU_RREADY);
 
 reg [2:0] state;
 localparam IDLE         = 3'b000;
@@ -115,7 +2831,7 @@ localparam LSU_CLINT    = 3'b001;
 localparam IFU_RAM      = 3'b010;
 localparam LSU_RAM      = 3'b100;
 
-    always @(posedge clock) begin
+    always @(posedge clock or negedge RESETN) begin
         if (RESETN == 1'b0) begin
             state <= IDLE;
         end else begin
@@ -194,1356 +2910,6 @@ assign CLINT_RREADY  = (state[0]) ? LSU_RREADY      : 0;
 assign CLINT_ARLEN   = (state[0]) ? LSU_ARLEN       : 0;
 assign CLINT_ARSIZE  = (state[0]) ? LSU_ARSIZE      : 0;
 assign CLINT_ARBURST = (state[0]) ? LSU_ARBURST     : 0;
-
-endmodule
-
-module CLINT(
-    input                               clock                      ,
-    input                               reset                      ,
-    //read data channel
-    output             [  31:0]         S_AXI_RDATA                ,
-    output             [   1:0]         S_AXI_RRESP                ,
-    output                              S_AXI_RVALID               ,
-    input                               S_AXI_RREADY               ,
-    output                              S_AXI_RLAST                ,
-    output             [   3:0]         S_AXI_RID                  ,
-
-    //read adress channel
-    input                               S_AXI_ARADDR               ,
-    input                               S_AXI_ARVALID              ,
-    output                              S_AXI_ARREADY              ,
-    input              [   3:0]         S_AXI_ARID                 ,
-    input              [   7:0]         S_AXI_ARLEN                ,
-    input              [   2:0]         S_AXI_ARSIZE               ,
-    input              [   1:0]         S_AXI_ARBURST              
-);
-
-/**********************regs******************************/
-wire                   [  63:0]         reg_mtime                  ;
-reg axi_raddr;
-
-assign S_AXI_ARREADY    = 1'b1;
-assign S_AXI_RRESP      = 2'b0;
-assign S_AXI_RVALID     = 1'b1;
-assign S_AXI_RLAST      = 1'b1;
-assign S_AXI_RID        = 4'b0;
-
-always @(posedge clock) begin
-    if (reset) begin
-        axi_raddr <= 1'b0;
-    end
-    else begin
-        axi_raddr <= S_AXI_ARADDR;
-    end
-end
-Reg  #(.WIDTH(64), .RESET_VAL(64'b0)) mtime_reg
-(
-    .clk(clock),
-    .rst(reset),
-    .din(reg_mtime+1),
-    .dout(reg_mtime)
-);
- 
-assign S_AXI_RDATA = axi_raddr ? reg_mtime[63 : 32] : reg_mtime[31 : 0];
-
-endmodule
-
-module Reg #( parameter WIDTH = 1, 
-              parameter RESET_VAL = 0) 
-(
-  input clk,
-  input rst,
-  input [WIDTH-1:0] din,
-  output reg [WIDTH-1:0] dout
-);
-  always @(posedge clk) begin
-    if (rst) dout <= RESET_VAL;
-    else dout <= din;
-  end
-
-endmodule
-module ysyx_23060124_stdrst(
-  input clock,
-  input i_rst_n,
-  output o_rst_n_sync
-);
-  reg [10:0] shift_reg;
-  always @(posedge clock or posedge i_rst_n) begin
-    if (i_rst_n) begin
-      shift_reg <= 11'b0;
-    end else begin
-      shift_reg <= {shift_reg[9:0], 1'b1};
-    end
-  end
-
-  assign o_rst_n_sync = shift_reg[10];
-
-endmodule
-module ysyx_23060124_idu_exu_regs (
-    input              [  31:0]         i_pc                       ,
-    input                               clock                      ,
-    input                               reset                      ,
-    // handshake signals
-    input                               i_pre_valid                ,
-    input                               i_post_ready               ,
-    output                              o_pre_ready                ,
-    output                              o_post_valid               ,
-
-    input              [  31:0]         i_imm                      ,
-    input              [  11:0]         i_csr_addr                 ,
-    input              [  31:0]         i_src1                     ,
-    input              [  31:0]         i_src2                     ,
-    input              [   3:0]         i_rd                       ,
-    input              [  31:0]         i_csr_rs2                  ,
-    input                               i_csr_src_sel              ,
-    /***TODO:
-    combine wen, csr_wen into one input
-    combine csr_addr rd into one input
-    ***/
-    input              [   2:0]         i_exu_opt                  ,
-    input              [   9:0]         i_alu_opt                  ,
-    input                               i_wen                      ,
-    input                               i_csr_wen                  ,
-    input              [   1:0]         i_src_sel1                 ,
-    input              [   2:0]         i_src_sel2                 ,
-    input                               i_mret                     ,
-    input                               i_ecall                    ,
-    input                               i_load                     ,
-    input                               i_store                    ,
-    input                               i_brch                     ,
-    input                               i_jal                      ,
-    input                               i_jalr                     ,
-    input                               i_fence_i                  ,
-    input                               i_ebreak                   ,
-    
-    input              [  31:0]         i_mepc                     ,
-    input              [  31:0]         i_mtvec                    ,
-
-    output reg         [  31:0]         o_pc                       ,
-    output reg         [  31:0]         o_src1                     ,
-    output reg         [  31:0]         o_src2                     ,
-    output reg         [  31:0]         o_imm                      ,
-    output reg         [   1:0]         o_src_sel1                 ,
-    output reg         [   2:0]         o_src_sel2                 ,
-    output reg         [   3:0]         o_rd                       ,
-    //
-    output reg         [  11:0]         o_csr_addr                 ,
-    output reg         [   2:0]         o_exu_opt                  ,
-    output reg         [   9:0]         o_alu_opt                  ,
-    output reg                          o_wen                      ,
-    output reg                          o_csr_wen                  ,
-    output reg                          o_mret                     ,
-    output reg                          o_ecall                    ,
-    
-    output reg                          o_load                     ,
-    output reg                          o_store                    ,
-    output reg                          o_brch                     ,
-    output reg                          o_jal                      ,
-    output reg                          o_ebreak                   ,
-    output reg                          o_fence_i                  ,
-    //
-    output reg                          o_jalr                      
-);
-
-reg                                     post_valid                 ;
-
-assign o_post_valid = post_valid;
-assign o_pre_ready  = i_post_ready; 
-always @(posedge clock or posedge reset) begin
-    if(reset) begin
-        post_valid <= 1'b0;   
-    end
-    else if(i_pre_valid) begin
-        post_valid <= 1'b1;
-    end
-    else if(~i_pre_valid && i_post_ready && o_post_valid)begin
-        post_valid <= 1'b0;
-    end
-end
-
-
-wire                    [  31:0]         sel_src1                   ;
-wire                    [  31:0]         sel_src2                   ;
-
-assign sel_src1 =   ({32{i_ecall}}& i_mtvec )|
-                    ({32{i_mret}} & i_mepc  )|
-                    i_src1;
-
-assign sel_src2 =   ({32{i_csr_src_sel}} & i_csr_rs2) | i_src2;
-
-always @(posedge clock or posedge reset) begin
-    if(reset) begin
-        o_pc            <= 32'b0;
-        o_src1          <= 32'b0;
-        o_src2          <= 32'b0;
-        o_imm           <= 32'b0;
-        o_src_sel1      <= 2'b0;
-        o_src_sel2      <= 3'b0;
-        o_rd            <= 4'b0;
-        o_exu_opt       <= 3'b0;
-        o_alu_opt       <= 10'b0;
-        o_wen           <= 1'b0;
-        o_csr_wen       <= 1'b0;
-        o_mret          <= 1'b0;
-        o_ecall         <= 1'b0;
-        o_load          <= 1'b0;
-        o_store         <= 1'b0;
-        o_brch          <= 1'b0;
-        o_jal           <= 1'b0;
-        o_jalr          <= 1'b0;
-        o_ebreak        <= 1'b0;
-        o_fence_i       <= 1'b0;
-        //
-        o_csr_addr      <= 12'b0;
-
-    end
-    else if(i_post_ready && o_post_valid) begin
-        o_pc            <= i_pc;
-        o_src1          <= sel_src1;
-        o_src2          <= sel_src2;
-        o_imm           <= i_imm;
-        o_src_sel1      <= i_src_sel1;
-        o_src_sel2      <= i_src_sel2;
-
-        o_rd            <= i_rd;
-        o_exu_opt       <= i_exu_opt;
-        o_alu_opt       <= i_alu_opt;
-        o_wen           <= i_wen;
-        o_csr_wen       <= i_csr_wen;
-        o_mret          <= i_mret;
-        o_ecall         <= i_ecall;
-        o_load          <= i_load;
-        o_store         <= i_store;
-        o_brch          <= i_brch;
-        o_jal           <= i_jal;
-        o_jalr          <= i_jalr;
-        o_ebreak        <= i_ebreak;
-        o_fence_i       <= i_fence_i;
-        o_csr_addr      <= i_csr_addr;
-
-    end
-    else if(i_post_ready && ~o_post_valid) begin
-        o_pc            <= 32'b0;
-        o_src1          <= 32'b0;
-        o_src2          <= 32'b0;
-        o_imm           <= 32'b0;
-        //TODO:
-        o_src_sel1      <= 2'b0;
-        o_src_sel2      <= 3'b0;
-        o_rd            <= 4'b0;
-        o_exu_opt       <= 3'b0;
-        o_alu_opt       <= 10'b0;
-        o_wen           <= 1'b0;
-        o_csr_wen       <= 1'b0;
-        o_mret          <= 1'b0;
-        o_ecall         <= 1'b0;
-        o_load          <= 1'b0;
-        o_store         <= 1'b0;
-        o_brch          <= 1'b0;
-        o_jal           <= 1'b0;
-        o_jalr          <= 1'b0;
-        o_ebreak        <= 1'b0;
-        o_fence_i       <= 1'b0;
-        //
-        o_csr_addr      <= 12'b0;
-    end
-end
-
-// import "DPI-C" function void load_cnt_dpic   ();
-// import "DPI-C" function void store_cnt_dpic  ();
-
-// always @(posedge clock) begin
-//   if(i_post_ready && o_post_valid && i_load) begin
-//     load_cnt_dpic();
-//   end
-//   if(i_post_ready && o_post_valid && i_store) begin
-//     store_cnt_dpic();
-//   end
-// end
-
-endmodule   
-module ysyx_23060124_IDU (
-    input                               clock                      ,
-    input              [  31:0]         ins                        ,
-    input                               reset                      ,
-
-    output             [  31:0]         o_imm                      ,
-    output             [   3:0]         o_rd                       ,
-    output             [   3:0]         o_rs1                      ,
-    output             [   3:0]         o_rs2                      ,
-    output             [  11:0]         o_csr_addr                 ,
-    output             [   2:0]         o_exu_opt                  ,
-    output             [   9:0]         o_alu_opt                  ,
-    output                              o_wen                      ,
-    output                              o_csr_wen                  ,
-    output             [   1:0]         o_src_sel1                 ,
-    output             [   2:0]         o_src_sel2                 ,
-
-    output                              o_mret                     ,
-    output                              o_ecall                    ,
-    output                              o_load                     ,
-    output                              o_store                    ,
-    output                              o_brch                     ,
-    output                              o_jal                      ,
-    output                              o_jalr                     ,
-    output                              o_ebreak                   ,
-    output                              o_fence_i                  
-);
-/************************parameter**********************/
-//TYPE_R_FUN3
-localparam                              ADD         =  3'b000      ;
-localparam                              SUB         =  3'b000      ;
-localparam                              SLL         =  3'b001      ;
-localparam                              SLT         =  3'b010      ;
-localparam                              SLTU        =  3'b011      ;
-localparam                              XOR         =  3'b100      ;
-localparam                              SRL_SRA     =  3'b101      ;
-localparam                              OR          =  3'b110      ;
-localparam                              AND         =  3'b111      ;
-//
-localparam                              ALU_ADD         =  10'd1   ;
-localparam                              ALU_SUB         =  10'd2   ;
-localparam                              ALU_SLL         =  10'd4   ;
-localparam                              ALU_SLT         =  10'd8   ;
-localparam                              ALU_SLTU        =  10'd16  ;
-localparam                              ALU_XOR         =  10'd32  ;
-localparam                              ALU_SRL         =  10'd64  ;
-localparam                              ALU_SRA         =  10'd512  ;
-localparam                              ALU_OR          =  10'd128 ;
-localparam                              ALU_AND         =  10'd256 ;
-
-//EXU_SRC_SEL
-localparam                              EXU_SEL_REG = 4'b0001        ;
-localparam                              EXU_SEL_IMM = 4'b0010        ;
-localparam                              EXU_SEL_PC4 = 4'b0100        ;
-localparam                              EXU_SEL_PCI = 4'b1000        ;
-//
-localparam                              SEL1_REG = 2'b01        ;
-localparam                              SEL1_PC  = 2'b10        ;
-
-localparam                              SEL2_REG = 3'b001        ;
-localparam                              SEL2_IMM = 3'b010        ;
-localparam                              SEL2_4   = 3'b100        ;
-
-
-localparam                              TYPE_I       =  7'b0010011;
-localparam                              TYPE_I_LOAD  =  7'b0000011;
-localparam                              TYPE_JALR    =  7'b1100111;
-localparam                              TYPE_EBRK    =  7'b1110011;
-localparam                              TYPE_S       =  7'b0100011;
-localparam                              TYPE_R       =  7'b0110011;
-localparam                              TYPE_AUIPC   =  7'b0010111;
-localparam                              TYPE_LUI     =  7'b0110111;
-localparam                              TYPE_JAL     =  7'b1101111;
-localparam                              TYPE_B       =  7'b1100011;
-localparam                              TYPE_FENCE   =  7'b0001111;
-//TYPE_I_FUN3
-localparam                              FUN3_SRL_SRA =  3'b101     ;
-//CSRR
-localparam                              FUN3_CSRRW = 3'b001        ;
-localparam                              FUN3_CSRRS = 3'b010        ;
-localparam                              FUN3_EXCPT = 3'b000        ;
-//TYPE_EXCPT_RS2
-localparam                              RS2_ECALL   =  5'b00000    ;
-localparam                              RS2_MRET    =  5'b00010    ;
-
-wire [2:0] func3    = ins[14:12];
-wire [6:0] opcode   = ins[6:0];
-wire [6:0] func7    = ins[31:25];
-wire [3:0] rs1      = ins[18:15];
-wire [3:0] rs2      = ins[23:20];
-wire [3:0] rd       = ins[10:7];
-
-wire                                    TYPEI       = (opcode == TYPE_I         );
-wire                                    TYPEI_LOAD  = (opcode == TYPE_I_LOAD    );
-wire                                    TYPER       = (opcode == TYPE_R         );
-wire                                    TYPELUI     = (opcode == TYPE_LUI       );
-wire                                    TYPEAUIPC   = (opcode == TYPE_AUIPC     );
-wire                                    TYPEJAL     = (opcode == TYPE_JAL       );
-wire                                    TYPEJALR    = (opcode == TYPE_JALR      );
-wire                                    TYPES       = (opcode == TYPE_S         );
-wire                                    TYPEB       = (opcode == TYPE_B         );
-wire                                    TYPEEBRK    = (opcode == TYPE_EBRK      );
-wire                                    TYPEFENCE   = (opcode == TYPE_FENCE     );
-wire                                    CSRRS       = (TYPEEBRK && func3 == FUN3_CSRRS      );
-wire                                    CSRRW       = (TYPEEBRK && func3 == FUN3_CSRRW      );
-
-assign o_imm = (TYPEI || TYPEI_LOAD) ? {{20{ins[31]}}, ins[31:20]} :
-               (TYPELUI || TYPEAUIPC) ? {ins[31:12], 12'b0} :
-               (TYPEJAL) ? {{12{ins[31]}}, ins[19:12], ins[20], ins[30:21], 1'b0} :
-               (TYPEJALR) ? {{20{ins[31]}}, ins[31:20]} :
-               (TYPEB) ? {{20{ins[31]}}, ins[7], ins[30:25], ins[11:8], 1'b0} :
-               (TYPES) ? {{20{ins[31]}}, ins[31:25], ins[11:7]} :
-               32'b0;
-
-assign o_rd = rd;
-
-assign o_rs1 = (TYPEAUIPC || TYPELUI ||TYPEJAL) ? 4'b0 : rs1;
-
-assign o_rs2 = (TYPER || TYPEB || TYPES) ? rs2 : 4'b0;
-
-//TODO: TYPE_I
-assign o_csr_addr = (TYPEEBRK) ? ins[31:20] : 12'b0;
-
-assign o_wen        = (TYPES || TYPEB || TYPEFENCE) ? 1'b0 : 1'b1;
-
-assign o_csr_wen    = (TYPEEBRK && |func3);
-
-wire o_if_unsigned;
-assign o_if_unsigned =  (TYPEI && func3 == SRL_SRA && func7[5]) ? 1'b1 :
-                        (TYPER && func3 == SRL_SRA && func7[5]) ? 1'b1 :
-                        (TYPER && func3 == ADD     && func7[5]) ? 1'b1 :
-                        1'b0;
-
-assign o_exu_opt =  func3;
-wire [2:0] exu_opt;
-assign exu_opt =  (TYPEB)       ? {1'b0,func3[2:1]}:
-                  func3;
-
-assign o_alu_opt =  (TYPES | TYPEI_LOAD | TYPELUI | TYPEAUIPC | TYPEJAL) ? ALU_ADD:
-                    (CSRRS) ? ALU_OR: 
-                    (CSRRW) ? ALU_ADD:
-                    (exu_opt ==  ADD && ~o_if_unsigned           )  ? ALU_ADD  :
-                    (exu_opt ==  SUB &&  o_if_unsigned           )  ? ALU_SUB  :
-                    (exu_opt ==  SLL           )  ? ALU_SLL  :
-                    (exu_opt ==  SLT           )  ? ALU_SLT  :
-                    (exu_opt ==  SLTU          )  ? ALU_SLTU :
-                    (exu_opt ==  XOR           )  ? ALU_XOR  :
-                    (exu_opt ==  SRL_SRA &&  o_if_unsigned      )  ? ALU_SRL  :
-                    (exu_opt ==  SRL_SRA && ~o_if_unsigned      )  ? ALU_SRA  :
-                    (exu_opt ==  OR            )  ? ALU_OR   :
-                    (exu_opt ==  AND           )  ? ALU_AND  :
-                    ALU_ADD;
-
-// assign o_alu_opt[0] = TYPES | TYPEI_LOAD | TYPELUI | TYPEAUIPC | TYPEJAL | CSRRW | (exu_opt ==  ADD && ~o_if_unsigned           );
-// assign o_alu_opt[1] = (exu_opt ==  SUB &&  o_if_unsigned           );
-// assign o_alu_opt[2] = (exu_opt ==  SLL           );
-// assign o_alu_opt[3] = (exu_opt ==  SLT           );
-// assign o_alu_opt[4] = (exu_opt ==  SLTU          );
-// assign o_alu_opt[5] = (exu_opt ==  XOR           );
-// assign o_alu_opt[6] = (exu_opt ==  SRL_SRA &&  o_if_unsigned      );
-// assign o_alu_opt[7] = (exu_opt ==  SRL_SRA && ~o_if_unsigned      );
-// assign o_alu_opt[8] = CSRRS |(exu_opt ==  OR            );
-// assign o_alu_opt[9] = (exu_opt ==  AND           );
-
-assign o_src_sel1 =   (TYPEI)       ? SEL1_REG:
-                      (TYPER)       ? SEL1_REG:
-                      (TYPELUI)     ? SEL1_REG:
-                      (TYPEAUIPC)   ? SEL1_PC:
-                      (TYPEJAL)     ? SEL1_PC:
-                      (TYPEJALR)    ? SEL1_PC:
-                      (TYPEI_LOAD)  ? SEL1_REG:
-                      (TYPES)       ? SEL1_REG:
-                      (TYPEB)       ? SEL1_REG:
-                      (CSRRW) ? SEL1_REG:
-                      (CSRRS) ? SEL1_REG:
-                      'b0;
-
-assign o_src_sel2 =   (TYPEI)       ? SEL2_IMM:
-                      (TYPER)       ? SEL2_REG:
-                      (TYPELUI)     ? SEL2_IMM:
-                      (TYPEAUIPC)   ? SEL2_IMM:
-                      (TYPEJAL)     ? SEL2_4:
-                      (TYPEJALR)    ? SEL2_4:
-                      (TYPEI_LOAD)  ? SEL2_IMM:
-                      (TYPES)       ? SEL2_IMM:
-                      (TYPEB)       ? SEL2_REG:
-                      (CSRRW) ? SEL2_IMM:
-                      (CSRRS) ? SEL2_REG:
-                      'b0;
-                                        
-assign o_ecall      = (TYPEEBRK && func3 == 3'b0 && rs2[1:0] == 2'b00);
-assign o_mret       = (TYPEEBRK && func3 == 3'b0 && rs2[1:0] == 2'b10);
-
-assign o_load       = (TYPEI_LOAD);
-assign o_store      = (TYPES)     ;
-assign o_brch       = (TYPEB)     ;
-assign o_jal        = (TYPEJAL)   ;
-assign o_jalr       = (TYPEJALR)  ;
-assign o_fence_i    = (TYPEFENCE)&&(func3 == 3'b001);
-assign o_ebreak     = (TYPEEBRK && func3 == 3'b0 && rs2[1:0] == 2'b01);
-
-endmodule
-module ysyx_23060124_exu_wbu_regs (
-    input                               clock                      ,
-    input                               reset                      ,
-    input                               i_brch                     ,
-    input                               i_jal                      ,
-    input                               i_wen                      ,
-    input                               i_csr_wen                  ,
-    //TODO: combine addr_rd and csr_addr into one input
-    //TODO: i_csr_wen adn i_wen into one input
-    input                               i_jalr                     ,
-    input                               i_ebreak                   ,
-    input                               i_mret                     ,
-    input                               i_ecall                    ,
-
-    input              [  31:0]         i_res                      ,
-    input              [  31:0]         i_pc_next                  ,
-    input              [  11:0]         i_csr_addr                 ,
-    input              [   3:0]         i_rd_addr                  ,
-
-    output reg         [  31:0]         o_pc_next                  ,
-    output reg         [  11:0]         o_csr_addr                 ,
-    output reg         [   3:0]         o_rd_addr                  , 
-    //
-    output reg                          o_wen                      ,
-    output reg                          o_csr_wen                  ,
-    //
-    output reg                          o_brch                     ,
-    output reg                          o_jal                      ,
-    output reg                          o_jalr                     ,
-    output reg                          o_mret                     ,
-    output reg                          o_ecall                    ,
-    output reg                          o_ebreak                   ,
-    //
-    output reg         [  31:0]         o_res                      ,
-    // output reg                          o_next                     ,
-    input                               i_post_ready               ,
-    input                               o_post_valid                
-);
-
-always @(posedge clock or posedge reset) begin
-    if(reset) begin
-        o_pc_next   <= 'b0; 
-        o_csr_addr  <= 'b0; 
-        o_rd_addr   <= 'b0; 
-        o_wen       <= 'b0; 
-        o_csr_wen   <= 'b0; 
-        o_brch      <= 'b0; 
-        o_jal       <= 'b0; 
-        o_jalr      <= 'b0; 
-        o_mret      <= 'b0; 
-        o_ecall     <= 'b0;  
-        o_res       <= 'b0; 
-        o_ebreak    <= 'b0;
-        // o_next      <= 'b0;
-    end
-    else if(i_post_ready && o_post_valid) begin
-        o_pc_next   <= i_pc_next;
-        o_csr_addr  <= i_csr_addr;
-        o_rd_addr   <= i_rd_addr;
-        o_wen       <= i_wen;
-        o_csr_wen   <= i_csr_wen;
-        o_brch      <= i_brch;
-        o_jal       <= i_jal;
-        o_jalr      <= i_jalr;
-        o_mret      <= i_mret;
-        o_ecall     <= i_ecall;
-        o_res       <= i_res;
-        o_ebreak    <= i_ebreak;
-        // o_next      <= 1'b1;
-    end
-    else if(i_post_ready && ~o_post_valid) begin
-        o_pc_next   <= 'b0; 
-        o_csr_addr  <= 'b0; 
-        o_rd_addr   <= 'b0; 
-        o_wen       <= 'b0; 
-        o_csr_wen   <= 'b0; 
-        o_brch      <= 'b0; 
-        o_jal       <= 'b0; 
-        o_jalr      <= 'b0; 
-        o_mret      <= 'b0; 
-        o_ecall     <= 'b0; 
-        o_res       <= 'b0; 
-        o_ebreak    <= 'b0;
-        // o_next      <= 'b0;
-    end
-end
-endmodule   module ysyx_23060124_EXU(
-    input                               clock                      ,
-    input                               reset                      ,
-    input              [  31:0]         i_src1                     ,
-    input              [  31:0]         i_src2                     ,
-    input              [  31:0]         i_pc                       ,
-    input              [  31:0]         i_imm                      ,
-    input              [   1:0]         i_src_sel1                 ,
-    input              [   2:0]         i_src_sel2                 ,
-
-    //control signal
-    input                               i_load                     ,
-    input                               i_store                    ,
-    input                               i_brch                     ,
-    input                               i_jal                      ,
-    input                               i_jalr                     ,
-    //ecall and mret
-    input                               i_ecall                    ,
-    input                               i_mret                     ,
-    input              [   9:0]         i_alu_opt                  ,
-    input              [   2:0]         exu_opt                    ,
-
-    output             [  31:0]         o_res                      ,
-    output                              o_brch                     ,
-    output             [  31:0]         o_pc_next                  ,
-
-    //write address channel  
-    output             [  31:0]         M_AXI_AWADDR               ,
-    output                              M_AXI_AWVALID              ,
-    input                               M_AXI_AWREADY              ,
-    output             [   7:0]         M_AXI_AWLEN                ,
-    output             [   2:0]         M_AXI_AWSIZE               ,
-    output             [   1:0]         M_AXI_AWBURST              ,
-    output             [   3:0]         M_AXI_AWID                 ,
-
-    //write data channel
-    output                              M_AXI_WVALID               ,
-    input                               M_AXI_WREADY               ,
-    output             [  31:0]         M_AXI_WDATA                ,
-    output             [   3:0]         M_AXI_WSTRB                ,
-    output                              M_AXI_WLAST                ,
-
-    //read data channel
-    input              [  31:0]         M_AXI_RDATA                ,
-    input              [   1:0]         M_AXI_RRESP                ,
-    input                               M_AXI_RVALID               ,
-    output                              M_AXI_RREADY               ,
-    input              [   3:0]         M_AXI_RID                  ,
-    input                               M_AXI_RLAST                ,
-
-    //read adress channel
-    output             [  31:0]         M_AXI_ARADDR               ,
-    output                              M_AXI_ARVALID              ,
-    input                               M_AXI_ARREADY              ,
-    output             [   3:0]         M_AXI_ARID                 ,
-    output             [   7:0]         M_AXI_ARLEN                ,
-    output             [   2:0]         M_AXI_ARSIZE               ,
-    output             [   1:0]         M_AXI_ARBURST              ,
-
-    //write back channel
-    input              [   1:0]         M_AXI_BRESP                ,
-    input                               M_AXI_BVALID               ,
-    output                              M_AXI_BREADY               ,
-    input              [   3:0]         M_AXI_BID                  ,
-  //exu -> wbu handshake
-    input                               i_post_ready               ,
-    input                               i_pre_valid                ,
-    output                              o_post_valid               ,
-    output                              o_pre_ready                 
-);
-
-/******************parameter******************/
-parameter BEQ   = 3'b000;
-parameter BNE   = 3'b001;
-parameter BLT   = 3'b100;
-parameter BGE   = 3'b101;
-parameter BLTU  = 3'b110;
-parameter BGEU  = 3'b111;
-
-wire                   [  31:0]         alu_res, load_res          ;
-wire                                    if_lsu                     ;
-
-reg post_valid;
-
-assign if_lsu = i_load || i_store;
-assign o_post_valid =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
-                       post_valid;
-
-assign o_pre_ready  =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
-                       1'b1;
-
-always @(posedge clock) begin
-    if(reset) begin
-        post_valid <= 1'b0;   
-    end
-    post_valid <= i_pre_valid;
-end
-
-reg                  [  31:0]         alu_src1                   ;
-reg                  [  31:0]         alu_src2                   ;
-
-always_comb begin
-    unique case(1'b1)
-        i_src_sel1[0]:  alu_src1 = i_src1;
-        default: alu_src1 = i_pc;
-    endcase
-end
-
-always_comb begin
-    unique case(1'b1)
-        i_src_sel2[0]:  alu_src2 = i_src2;
-        i_src_sel2[1]:  alu_src2 = i_imm;
-        i_src_sel2[2]:  alu_src2 = 32'h4;
-        default: alu_src2 = 32'h0;
-    endcase
-end
-
-assign o_pc_next =    i_jal             ? i_pc    + i_imm : 
-                      i_jalr            ? i_src1  + i_imm : 
-                      i_brch            ? i_pc    + i_imm :
-                      i_ecall           ? i_src1          :
-                      i_mret            ? i_src1          : 
-                      i_pc + 4;
-
-ysyx_23060124_ALU exu_alu(
-    .src1                              (alu_src1                  ),
-    .src2                              (alu_src2                  ),
-    .opt                               (i_alu_opt                 ),
-    .res                               (alu_res                   ) 
-);
-
-ysyx_23060124_LSU exu_lsu(
-    .clock                             (clock                     ),
-    .reset                             (reset                     ),
-    .store_src                         (i_src2                    ),
-    .alu_res                           (alu_res                   ),
-    .exu_opt                           (exu_opt                   ),
-    .load_res                          (load_res                  ),
-    .i_load                            (i_load                    ),
-    .i_store                           (i_store                   ),
-  //lsu ->exu sram axi
-  //write address channel  
-    .M_AXI_AWADDR                      (M_AXI_AWADDR              ),
-    .M_AXI_AWVALID                     (M_AXI_AWVALID             ),
-    .M_AXI_AWREADY                     (M_AXI_AWREADY             ),
-    .M_AXI_AWLEN                       (M_AXI_AWLEN               ),
-    .M_AXI_AWSIZE                      (M_AXI_AWSIZE              ),
-    .M_AXI_AWBURST                     (M_AXI_AWBURST             ),
-    .M_AXI_AWID                        (M_AXI_AWID                ),
-
-  //write data channel
-    .M_AXI_WVALID                      (M_AXI_WVALID              ),
-    .M_AXI_WREADY                      (M_AXI_WREADY              ),
-    .M_AXI_WDATA                       (M_AXI_WDATA               ),
-    .M_AXI_WSTRB                       (M_AXI_WSTRB               ),
-    .M_AXI_WLAST                       (M_AXI_WLAST               ),
-  //read data channel
-    .M_AXI_RDATA                       (M_AXI_RDATA               ),
-    .M_AXI_RRESP                       (M_AXI_RRESP               ),
-    .M_AXI_RVALID                      (M_AXI_RVALID              ),
-    .M_AXI_RREADY                      (M_AXI_RREADY              ),
-    .M_AXI_RID                         (M_AXI_RID                 ),
-    .M_AXI_RLAST                       (M_AXI_RLAST               ),
-  //read adress channel
-    .M_AXI_ARADDR                      (M_AXI_ARADDR              ),
-    .M_AXI_ARVALID                     (M_AXI_ARVALID             ),
-    .M_AXI_ARREADY                     (M_AXI_ARREADY             ),
-    .M_AXI_ARID                        (M_AXI_ARID                ),
-    .M_AXI_ARLEN                       (M_AXI_ARLEN               ),
-    .M_AXI_ARSIZE                      (M_AXI_ARSIZE              ),
-    .M_AXI_ARBURST                     (M_AXI_ARBURST             ),
-  //write back channel
-    .M_AXI_BRESP                       (M_AXI_BRESP               ),
-    .M_AXI_BVALID                      (M_AXI_BVALID              ),
-    .M_AXI_BREADY                      (M_AXI_BREADY              ),
-    .M_AXI_BID                         (M_AXI_BID                 ),
-  //handshake
-    .i_pre_valid                       (i_pre_valid               ),
-    .o_pre_ready                       (o_pre_ready               )
-);
-
-wire beq, bne;
-assign beq = (alu_src1 == alu_src2);
-assign bne = ~beq;
-reg                                     brch_res                   ;
-wire [2:0] brch_opt;
-assign brch_opt = exu_opt;
-always @(*) begin
-  case(brch_opt)
-    BEQ:  brch_res = beq;
-    BNE:  brch_res = bne;
-    BLT:  brch_res = alu_res[0] ;
-    BGE:  brch_res = ~alu_res[0] ;
-    BLTU: brch_res = alu_res[0];
-    BGEU: brch_res = ~alu_res[0];
-    default: brch_res = 1'b0;
-  endcase
-end
-assign o_res  = i_load ? load_res : alu_res;
-assign o_brch = i_brch && brch_res;
-
-endmodule
-module ysyx_23060124_LSU
-(
-    input                               clock                      ,
-    input                               reset                     ,
-    input              [  31:0]         store_src                  ,
-    input              [  31:0]         alu_res                    ,
-    input              [   2:0]         exu_opt                    ,
-    output reg         [  31:0]         load_res                   ,
-    //
-    input                               i_load                     ,
-    input                               i_store                    ,
-    //axi interface
-    //write address channel  
-    output             [  31:0]         M_AXI_AWADDR               ,
-    output                              M_AXI_AWVALID              ,
-    input                               M_AXI_AWREADY              ,
-    output             [   7:0]         M_AXI_AWLEN                ,
-    output             [   2:0]         M_AXI_AWSIZE               ,
-    output             [   1:0]         M_AXI_AWBURST              ,
-    output             [   3:0]         M_AXI_AWID                 ,
-
-    //write data channel
-    output                              M_AXI_WVALID               ,
-    input                               M_AXI_WREADY               ,
-    output             [  31:0]         M_AXI_WDATA                ,
-    output             [   3:0]         M_AXI_WSTRB                ,
-    output                              M_AXI_WLAST                ,
-
-    //read data channel
-    input              [  31:0]         M_AXI_RDATA                ,
-    input              [   1:0]         M_AXI_RRESP                ,
-    input                               M_AXI_RVALID               ,
-    output                              M_AXI_RREADY               ,
-    input              [   3:0]         M_AXI_RID                  ,
-    input                               M_AXI_RLAST                ,
-
-    //read adress channel
-    output             [  31:0]         M_AXI_ARADDR               ,
-    output                              M_AXI_ARVALID              ,
-    input                               M_AXI_ARREADY              ,
-    output             [   3:0]         M_AXI_ARID                 ,
-    output             [   7:0]         M_AXI_ARLEN                ,
-    output             [   2:0]         M_AXI_ARSIZE               ,
-    output             [   1:0]         M_AXI_ARBURST              ,
-
-    //write back channel
-    input              [   1:0]         M_AXI_BRESP                ,
-    input                               M_AXI_BVALID               ,
-    output                              M_AXI_BREADY               ,
-    input              [   3:0]         M_AXI_BID                  ,
-  //lsu -> wbu handshake
-    input                               o_pre_ready                ,
-    input                               i_pre_valid                
-);
-/************parameter************/
-//exu_opt
-parameter LB  = 3'b000;
-parameter LH  = 3'b001;
-parameter LW  = 3'b010;
-parameter LBU = 3'b100;
-parameter LHU = 3'b101;
-
-parameter SB = 3'b000;
-parameter SH = 3'b001;
-parameter SW = 3'b010;
- 
-wire                   [   3:0]         wstrb                      ;
-// Initiate AXI transactions
-wire                                    INIT_AXI_TXN               ;
-// AXI4LITE signals
-reg                                     axi_awvalid                ;
-reg                                     axi_wvalid                 ;
-reg                                     axi_arvalid                ;
-reg                                     axi_rready                 ;
-reg                                     axi_bready                 ;
-//combine awaddr araddr to 1
-reg                    [  31:0]         axi_axaddr                 ;
-
-reg                                     init_txn_ff                ;
-reg                                     init_txn_ff2               ;
-reg                                     init_txn_edge              ;
-reg                                     o_pre_ready_d1             ;
-
-wire                                    init_txn_pulse             ;
-wire                                    is_ls                      ;
-wire                   [   4:0]         shift8                     ;
-reg                    [   1:0]         shift                      ;
-
-wire txn_pulse_load;
-wire txn_pulse_store;
-
-assign shift8 = {shift, 3'b0};
-assign M_AXI_AWADDR = axi_axaddr;
-assign M_AXI_WDATA  = store_src << shift8;
-
-assign M_AXI_AWVALID	= axi_awvalid;
-assign M_AXI_AWLEN = 'b0;
-assign M_AXI_AWSIZE =   (exu_opt == SW) ? 3'b010 :
-                        (exu_opt == SH) ? 3'b001 :
-                        (exu_opt == SB) ? 3'b000 : 3'b010;
-assign M_AXI_AWID    = 0;
-assign M_AXI_AWBURST = 2'b00;
-//Write Data(W)
-assign M_AXI_WVALID	= axi_wvalid;
-//Set all byte strobes in this example
-assign wstrb =  (exu_opt == SB) ? 4'b0001 :
-                (exu_opt == SH) ? 4'b0011 :
-                (exu_opt == SW) ? 4'b1111 : 4'b0000;
-
-assign M_AXI_WSTRB = wstrb << shift;
-assign M_AXI_WLAST = 1'b1;
-
-//Write Response (B)
-assign M_AXI_BREADY	= axi_bready;
-//Read Address (AR)
-assign M_AXI_ARADDR = axi_axaddr;
-assign M_AXI_ARVALID	= axi_arvalid;
-assign M_AXI_ARLEN = 'b0;
-assign M_AXI_ARSIZE =   (exu_opt[1:0] == 2'b10) ? 3'b010 :
-                        (exu_opt[1:0] == 2'b01) ? 3'b001 :
-                        (exu_opt[1:0] == 2'b00) ? 3'b000 : 3'b010;
-                        
-assign M_AXI_ARBURST = 2'b00;
-assign M_AXI_ARID = 0;
-
-//Read and Read Response (R)
-assign M_AXI_RREADY	= axi_rready;
-//Example design I/O
-assign init_txn_pulse	= reset ? 1'b0 : (!init_txn_ff2) && init_txn_ff;
-assign INIT_AXI_TXN   = reset ? 1'b0 : (o_pre_ready_d1 && is_ls ? 1'b1 : 1'b0);
-assign is_ls = i_load  || i_store;
-assign txn_pulse_load   = i_load  && init_txn_pulse;
-assign txn_pulse_store  = i_store && init_txn_pulse;  
-
-reg idle;
-
-always @(posedge clock)begin
-    if(reset)begin
-      o_pre_ready_d1 <= 1'b0; 
-    end
-    else begin
-      o_pre_ready_d1 <= o_pre_ready;
-    end
-end
-
-always @(posedge clock)										      
-    begin                                                                        
-    if (reset)                                                   
-        begin                                                                    
-        init_txn_ff <= 1'b0;                                                   
-        init_txn_ff2 <= 1'b0;     
-        shift <= 2'b00;                                              
-        end                                                                               
-    else                                                                       
-        begin  
-        init_txn_ff <= INIT_AXI_TXN;
-        init_txn_ff2 <= init_txn_ff;
-        axi_axaddr <= alu_res;
-        shift <= alu_res[1:0];  
-        end                                                                      
-    end     
-
-  // always @(posedge clock)										      
-  //   begin                                                                        
-  //   if (reset)                                                   
-  //       begin                                                                    
-  //         idle <= 1'b1;
-  //       end                                                                               
-  //   else if((i_store || i_load) && idle) begin
-  //     idle <= 1'b0;
-  //   end            
-  //   else if((M_AXI_RLAST && M_AXI_RREADY) || M_AXI_BREADY) begin
-  //     idle <= 1'b1;
-  //   end          
-  //   else idle <= idle;                                                
-  //   end     
-
-	  always @(posedge clock)										      
-	  begin                                                                         
-	    if (reset)                                                   
-	      begin                                                                    
-	        axi_awvalid <= 1'b0;                                                   
-	      end                                                                      
-	    else                                                                       
-	      begin                                                                    
-	        if (txn_pulse_store)                                                
-	          begin                                                                
-	            axi_awvalid <= 1'b1;
-	          end                                                                  
-	        else if (M_AXI_AWREADY && axi_awvalid)                                 
-	          begin                                                                
-	            axi_awvalid <= 1'b0;                                               
-	          end                                                                  
-	      end                                                                      
-	  end      
-
-	   always @(posedge clock)                                        
-	   begin                                                                         
-	     if (reset)                                                    
-	       begin                                                                     
-	         axi_wvalid <= 1'b0;       
-	       end                                                                       
-	     else if (txn_pulse_store)                                                
-	       begin                                                                     
-	         axi_wvalid <= 1'b1;       
-	       end                                                                       
-	     else if (M_AXI_WREADY && axi_wvalid)                                        
-	       begin                                                                     
-	        axi_wvalid <= 1'b0;         
-	       end                                                                       
-	   end                                                                           
-
-	  always @(posedge clock)                                    
-	  begin                                                                
-	    if (reset)                                           
-	      begin                                                            
-	        axi_bready <= 1'b0;                                            
-	      end                                                                                   
-	    else if (M_AXI_BVALID && ~axi_bready)                              
-	      begin                                                            
-	        axi_bready <= 1'b1;                                            
-	      end                                                              
-	    // deassert after one clock cycle                                  
-	    else if (axi_bready)                                               
-	      begin                                                            
-	        axi_bready <= 1'b0;                                            
-	      end                                                              
-	    else                                                               
-	      axi_bready <= axi_bready;                                        
-	  end                                                                  
-	                                                                                                                                  
-    always @(posedge clock)                                                     
-    begin                                                                            
-    if (reset)                                                   
-        begin                                                                        
-        axi_arvalid <= 1'b0;                                                       
-        end                                                                          
-    else if (txn_pulse_load)                                                    
-        begin                                                                        
-        axi_arvalid <= 1'b1;  
-        end                                                                          
-    else if (axi_arvalid && M_AXI_ARREADY)                                         
-        begin                                                                        
-        axi_arvalid <= 1'b0;                                                       
-        end                                                                          
-    end                                                                              
-                     
-    always @(posedge clock)                                    
-    begin                                                                 
-    if (reset)                                                                                    
-        begin                                                             
-        axi_rready <= 1'b0;                                             
-        end                                                                                        
-    else if (M_AXI_RVALID && ~axi_rready)                               
-        begin                                                             
-        axi_rready <= 1'b1;                                             
-        end                                                               
-    else if (axi_rready)                                                
-        begin                                                             
-        axi_rready <= 1'b0;                                             
-        end                                                               
-    end 
-                                
-wire                   [  31:0]         axi_rdata                  ;
-assign axi_rdata = M_AXI_RDATA >> shift8;
-
-always @(*) begin
-  case(exu_opt)
-    LB  : load_res = {{24{axi_rdata[7]}}, axi_rdata[7:0]};
-    LH  : load_res = {{16{axi_rdata[15]}}, axi_rdata[15:0]};
-    LW  : load_res = axi_rdata[31:0];
-    LBU : load_res = {24'b0, axi_rdata[7:0]};
-    LHU : load_res = {{16'b0}, axi_rdata[15:0]};
-    default: load_res = 32'b0;
-  endcase
-end
-
-endmodule
-module ysyx_23060124_ALU (
-    input       signed [  31:0]         src1                       ,
-    input       signed [  31:0]         src2                       ,
-    input              [   9:0]         opt                        ,
-    output reg         [  31:0]         res                         
-);
-
-/***************parameter***************/
-parameter ADD =  4'b0000;
-parameter SUB =  4'b1000;
-parameter SLL =  4'b0001;
-parameter SLT =  4'b0010;
-parameter SLTU=  4'b0011;
-parameter XOR =  4'b0100;
-parameter SRL =  4'b0101;
-parameter OR  =  4'b0110;
-parameter AND =  4'b0111;
-
-localparam                              ALU_ADD         =  10'd1   ;
-localparam                              ALU_SUB         =  10'd2   ;
-localparam                              ALU_SLL         =  10'd4   ;
-localparam                              ALU_SLT         =  10'd8   ;
-localparam                              ALU_SLTU        =  10'd16  ;
-localparam                              ALU_XOR         =  10'd32  ;
-localparam                              ALU_SRL         =  10'd64  ;
-localparam                              ALU_OR          =  10'd128 ;
-localparam                              ALU_AND         =  10'd256 ;
-localparam                              ALU_SRA         =  10'd512  ;
-
-wire                   [  31:0]         add_res                    ;
-wire                   [  31:0]         and_res                    ;
-wire                   [  31:0]         or_res                     ;
-wire                   [  31:0]         xor_res                    ;
-wire                   [  31:0]         sll_res                    ;
-wire                   [  31:0]         slt_res                    ;
-wire                   [  31:0]         sltu_res                   ;
-wire            signed [  31:0]         srl_res                    ;
-wire                   [  31:0]         sra_res                    ;
-wire                   [  31:0]         sub_res                    ;
-
-wire                                    op_add                     ;
-wire                                    op_sub                     ;
-wire                                    op_and                     ;
-wire                                    op_or                      ;
-wire                                    op_xor                     ;
-wire                                    op_sll                     ;
-wire                                    op_slt                     ;
-wire                                    op_sltu                    ;
-wire                                    op_srl                     ;
-wire                                    op_sra                     ;
-
-
-assign op_add = opt[0];
-assign op_sub = opt[1];
-assign op_sll = opt[2];
-assign op_slt = opt[3];
-assign op_sltu= opt[4];
-assign op_xor = opt[5];
-assign op_srl = opt[6];
-assign op_or  = opt[7];
-assign op_and = opt[8];
-assign op_sra = opt[9];
-
-assign add_res      = src1 + src2;
-assign sub_res      = src1 - src2;
-assign and_res      = src1 & src2;
-assign or_res       = src1 | src2;
-assign xor_res      = src1 ^ src2;
-assign sll_res      = src1 << src2[4:0];
-assign srl_res      = src1 >>> src2[4:0];
-assign sra_res      = src1 >> src2[4:0];
-assign slt_res      = (src1[31] != src2[31]) ? (src1[31] ? 32'b1 : 32'b0) : ((src1 < src2) ? 32'b1 : 32'b0);
-assign sltu_res     = ({1'b0, src1} < {1'b0, src2}) ? 32'b1 : 32'b0;
-
-always_comb begin
-    unique case(1'b1)
-        op_add:     res = add_res;
-        op_sub:     res = sub_res;
-        op_slt:     res = slt_res;
-        op_sltu:    res = sltu_res;
-        op_and:     res = and_res;
-        op_or:      res = or_res;
-        op_xor:     res = xor_res;
-        op_sll:     res = sll_res;
-        op_srl:     res = srl_res;
-        op_sra:     res = sra_res;
-        default:    res = 32'b0;
-    endcase
-end
-
-endmodule
-module ysyx_23060124_CSR_RegisterFile (
-    input                               clock                      ,
-    input                               reset                        ,
-    input                               i_csr_wen                  ,
-    input                               i_ecall                    ,
-    input                               i_mret                     ,
-    input              [  31:0]         i_pc                       ,
-    
-    input              [  11:0]         i_csr_raddr                ,
-    output             [  31:0]         o_csr_rdata                ,
-
-    input              [  11:0]         i_csr_waddr                ,
-    input              [  31:0]         i_csr_wdata                ,
-
-    output             [  31:0]         o_mepc                     ,
-    output             [  31:0]         o_mtvec                    
-);
-// ysyx_23060124
-wire [31:0] mvendorid , marchid;
-wire [31:0] mcause;
-assign mvendorid    = 32'h79737978;
-assign marchid      = 32'h23060124;
-assign mcause       = 32'd11;
-
-reg [12:0] mstatus;
-reg [31:0] mepc;
-reg [31:0] mtvec;
-
-always @(posedge  clock) begin
-    if(reset) begin
-        mstatus <= 13'b0;
-        mepc <= 32'b0;
-        mtvec <= 32'b0;
-    end
-    else if(i_ecall)begin
-        mepc    <= i_pc;
-        // mstatus <= {mstatus[31:13], 2'b11, mstatus[10:8],mstatus[3],mstatus[6:4], 1'b0, mstatus[2:0]};
-        mstatus[7] <= mstatus[3];
-        mstatus[12:11] <= 2'b11;
-        mstatus[3] <= 1'b0;
-    end
-    else if(i_mret)begin
-        mepc <= mepc;
-        // mstatus <={mstatus[31:13], 2'b0, mstatus[10:8],1'b1,mstatus[6:4], 1'b0, mstatus[2:0]};
-        mstatus[3] <= mstatus[7];
-        mstatus[7] <= 1'b1;
-        mstatus[12:11] <= 2'b0;
-    end
-    else if (i_csr_wen) begin 
-        case (i_csr_waddr)
-            // 12'h300: mstatus    <= i_csr_wdata[15:0];
-            12'h341: mepc       <= i_csr_wdata;
-            12'h305: mtvec      <= i_csr_wdata;
-            default: begin
-            end
-        endcase
-    end
-    else begin
-        mtvec <= mtvec;
-        mepc <= mepc;
-        mstatus <= mstatus;
-    end
-end 
-// always @(*) begin
-//     case(i_csr_raddr)
-//         12'hf11: o_csr_rdata = mvendorid;
-//         12'hf12: o_csr_rdata = marchid;
-//         12'h300: o_csr_rdata = mstatus;
-//         12'h341: o_csr_rdata = mepc;
-//         12'h342: o_csr_rdata = mcause;
-//         12'h305: o_csr_rdata = mtvec;
-//         default: o_csr_rdata = 32'b0;
-//     endcase
-// end
-
-assign o_csr_rdata  = i_csr_raddr == 12'hf11 ? mvendorid :
-                      i_csr_raddr == 12'hf12 ? marchid :
-                      i_csr_raddr == 12'h300 ? {19'b0, mstatus} :
-                      i_csr_raddr == 12'h341 ? mepc :
-                      i_csr_raddr == 12'h342 ? mcause :
-                      i_csr_raddr == 12'h305 ? mtvec : 
-                      32'b0;
-
-assign o_mepc       = i_mret    ? mepc  : 32'b0;
-assign o_mtvec      = i_ecall   ? mtvec : 32'b0;
-
-endmodule
-module ysyx_23060124_RegisterFile (
-    input                               clock                      ,
-    input                               reset                      ,
-    input              [  31:0]         wdata                      ,
-    input              [   3:0]         waddr                      ,
-  
-    //
-    input              [   3:0]         exu_rd                     ,
-    input              [  31:0]         exu_wdata                  ,
-    input                               exu_wen                    ,
-    input              [   3:0]         wbu_rd                     ,
-    input              [  31:0]         wbu_wdata                  ,
-    input                               wbu_wen                    ,
-    //
-    input                               idu_wen                    ,
-    input              [   3:0]         idu_waddr                  ,
-    // 
-    input              [   3:0]         raddr1                     ,
-    input              [   3:0]         raddr2                     ,
-
-    output             [  31:0]         rdata1                     ,
-    output             [  31:0]         rdata2                     ,
-    input                               wen                         
-);
-
-reg  [31:0] regfile [15:1];
-wire [31:0] rf      [15:0];
-
-genvar i;
-generate
-  for(i = 1; i < 16; i = i + 1) begin
-    assign rf[i] = regfile[i];
-  end
-endgenerate
-
-assign rf[0] = 32'b0;
-
-always @(posedge  clock) begin
-  if (wen && waddr != 0) begin
-    regfile[waddr[3:0]] <= wdata;
-  end
-end
-
-assign rdata1 = (raddr1 == exu_rd && exu_wen)  ? exu_wdata:
-                (raddr1 == wbu_rd && wbu_wen)  ? wbu_wdata:
-                rf[raddr1[3:0]];
-
-assign rdata2 = (raddr2 == exu_rd && exu_wen)  ? exu_wdata:
-                (raddr2 == wbu_rd && wbu_wen)  ? wbu_wdata:
-                rf[raddr2[3:0]];
-
-
-endmodule
-
-module ysyx_23060124_WBU (
-    input                               clock                      ,
-    input                               reset                      ,
-    input                               i_pre_valid                ,
-    input                               i_wen                      ,
-    input              [   3:0]         i_rd_addr                  ,
-    input              [  11:0]         i_csr_addr                 ,
-    input                               i_csr_wen                  ,
-    input                               i_brch                     ,
-    input                               i_jal                      ,
-    input                               i_jalr                     ,
-    input                               i_ebreak                   ,
-    input                               i_mret                     ,
-    input                               i_ecall                    ,
-    input              [  31:0]         i_pc_next                  ,
-    // input                               i_next                     ,
-  // ecall and mret
-
-    input              [  31:0]         i_res                      ,
-
-    output reg         [  31:0]         o_pc_next                  ,
-    output             [  31:0]         o_rd_wdata                 ,
-    output             [  31:0]         o_csr_rd_wdata             ,
-    output                              o_wbu_wen                  ,
-    output                              o_wbu_csr_wen              ,
-    output             [   3:0]         o_rd_addr                  ,
-    output             [  11:0]         o_csr_addr                 ,
-
-    output reg                          o_pre_ready                ,
-    output reg                          o_pc_update                 
-);
-
-
-wire [31:0] pc_next;
-
-assign o_rd_wdata       = i_res;
-assign o_csr_rd_wdata   = i_res;
-assign o_wbu_wen        = i_wen ;
-assign o_wbu_csr_wen    = i_csr_wen ;
-assign o_rd_addr        =  i_rd_addr ;
-assign o_csr_addr       =  i_csr_addr;
-
-always @(posedge clock) begin
-  if(reset) begin
-    o_pre_ready <= 1'b1;
-  end
-  else begin
-    o_pre_ready <= o_pre_ready;
-  end
-end
-
-always @(posedge clock) begin
-  if(reset) begin
-    o_pc_update <= 1'b0;
-  end
-  else if(~o_pc_update) begin
-    o_pc_update <= i_jal || i_jalr || i_brch  || i_ecall || i_mret;
-  end
-  else if(o_pc_update) begin
-    o_pc_update <= 1'b0;
-  end
-end
-
-always @(posedge clock) begin
-  if(reset) begin
-    o_pc_next <= 32'b0;
-  end
-  else begin
-    o_pc_next <= i_pc_next;
-  end
-end
-
-// `ifdef DIFF_TEST
-// reg diff;
-// always @(posedge clock)begin
-//   if(reset) begin
-//     diff <= 1'b0;
-//   end
-//   // else diff <= i_next && ((i_res != 32'b0) || (i_rd_addr != 4'b0) || (i_wen != 1'b0) || (i_jal || i_jalr || i_brch || i_ecall || i_mret) != 0);
-//   else diff <= i_next;
-// end
-// `endif 
 
 endmodule
 
@@ -1633,7 +2999,8 @@ wire                   [ISA_WIDTH-1:0]  exu_res                    ;
 wire                                    exu_brch                   ;
 //mret ecall
 wire                   [ISA_WIDTH-1:0]  csr_rs2                    ;
-wire                   [ISA_WIDTH-1:0]  mcause, mstatus, mepc, mtvec;
+// wire                   [ISA_WIDTH-1:0]  mcause, mstatus            ;
+wire                   [ISA_WIDTH-1:0]  mepc, mtvec;
 
 //load store
 wire                   [3-1:0]          exu_opt                    ;
@@ -1652,12 +3019,11 @@ wire                                    ifu2idu_valid, idu2ifu_ready;
 wire                                    idu2exu_valid, exu2idu_ready;
 wire                                    exu2wbu_valid, wbu2exu_ready;
 //cache 
-wire                                    mem_valid                  ;
-wire                                    ifu2cache_req              ;
 wire                   [ISA_WIDTH-1:0]  icache_ins                 ;
 wire                   [ISA_WIDTH-1:0]  ifu_req_addr               ;
 wire                                    icache_hit                 ;
 wire                                    fence_i                    ;
+
 
 //write address channel  
 wire                   [  31:0]         LSU_SRAM_AXI_AWADDR        ;
@@ -1667,7 +3033,7 @@ wire                   [   7:0]         LSU_SRAM_AXI_AWLEN         ;
 wire                   [   2:0]         LSU_SRAM_AXI_AWSIZE        ;
 wire                   [   1:0]         LSU_SRAM_AXI_AWBURST       ;
 wire                   [   3:0]         LSU_SRAM_AXI_AWID          ;
-//write data channel,
+//write data channel
 wire                                    LSU_SRAM_AXI_WVALID        ;
 wire                                    LSU_SRAM_AXI_WREADY        ;
 wire                   [  31:0]         LSU_SRAM_AXI_WDATA         ;
@@ -1681,8 +3047,7 @@ wire                                    IFU_SRAM_AXI_RVALID, LSU_SRAM_AXI_RVALID
 wire                                    IFU_SRAM_AXI_RREADY, LSU_SRAM_AXI_RREADY;
 wire                   [   3:0]         IFU_SRAM_AXI_RID,LSU_SRAM_AXI_RID;
 wire                                    IFU_SRAM_AXI_RLAST,LSU_SRAM_AXI_RLAST;
-    
-//read adress channel
+//read address channel
 wire                   [  31:0]         IFU_SRAM_AXI_ARADDR, LSU_SRAM_AXI_ARADDR;
 wire                                    IFU_SRAM_AXI_ARVALID, LSU_SRAM_AXI_ARVALID;
 wire                                    IFU_SRAM_AXI_ARREADY, LSU_SRAM_AXI_ARREADY;
@@ -1722,29 +3087,8 @@ ysyx_23060124_stdrst u_stdrst(
 
 wire                   [   3:0]         wbu_rd_addr                ;
 wire                   [  11:0]         wbu_csr_addr               ;
-
-ysyx_23060124_RegisterFile regfile1(
-    .clock                             (clock                     ),
-    .reset                             (reset                     ),
-    .waddr                             (wbu_rd_addr               ),
-    .wdata                             (wbu_rd_wdata              ),
-    .wen                               (wbu_wen                   ),
-//
-    .exu_rd                            (idu2exu_rd                ),
-    .exu_wdata                         (exu_res                   ),
-    .exu_wen                           (idu2exu_wen               ),
-    .wbu_rd                            (exu2wbu_rd_addr           ),
-    .wbu_wdata                         (exu2wbu_res               ),
-    .wbu_wen                           (exu2wbu_wen               ),
-//
-    .raddr1                            (idu_addr_rs1              ),
-    .raddr2                            (idu_addr_rs2              ),
-    .rdata1                            (rs1                       ),
-    .rdata2                            (rs2                       ),
-        //scoreboard
-    .idu_wen                           (idu_wen                   ),
-    .idu_waddr                         (idu_addr_rd               )
-);
+wire [31:0] ifu2idu_ins;
+wire [31:0] ifu2idu_pc;
 
 ysyx_23060124_CSR_RegisterFile Csrs(
     .clock                             (clock                     ),
@@ -1764,13 +3108,36 @@ ysyx_23060124_CSR_RegisterFile Csrs(
     .o_mtvec                           (mtvec                     ) 
 );
   
+
+wire                   [  31:0]         idu2exu_pc                 ;
+wire                   [  31:0]         idu2exu_src1               ;
+wire                   [  31:0]         idu2exu_src2               ;
+wire                   [  31:0]         idu2exu_imm                ;
+wire                   [   1:0]         idu2exu_src_sel1           ;
+wire                   [   2:0]         idu2exu_src_sel2           ;
+wire                   [   3:0]         idu2exu_rd                 ;
+wire                   [   2:0]         idu2exu_exu_opt            ;
+wire                   [   9:0]         idu2exu_alu_opt            ;
+wire                                    idu2exu_wen                ;
+wire                                    idu2exu_csr_wen            ;
+wire                                    idu2exu_mret               ;
+wire                                    idu2exu_ecall              ;
+wire                                    idu2exu_load               ;
+wire                                    idu2exu_store              ;
+wire                                    idu2exu_brch               ;
+wire                                    idu2exu_jal                ;
+wire                                    idu2exu_jalr               ;
+wire                                    idu2exu_ebreak             ;
+wire                                    idu2exu_fence_i            ;
+wire                   [  11:0]         idu2exu_csr_addr           ;
+
 ysyx_23060124__icache icache1(
     .clock                             (clock                     ),
     .rst_n_sync                        (rst_n_sync                ),
     .addr                              (ifu_req_addr              ),
     .data                              (icache_ins                ),
     .hit                               (icache_hit                ),
-    .fence_i                           (fence_i                   ),
+    .fence_i                           (idu2exu_fence_i           ),
   //read data channel
     .M_AXI_RDATA                       (IFU_SRAM_AXI_RDATA        ),
     .M_AXI_RRESP                       (IFU_SRAM_AXI_RRESP        ),
@@ -1785,12 +3152,8 @@ ysyx_23060124__icache icache1(
     .M_AXI_ARID                        (IFU_SRAM_AXI_ARID         ),
     .M_AXI_ARLEN                       (IFU_SRAM_AXI_ARLEN        ),
     .M_AXI_ARSIZE                      (IFU_SRAM_AXI_ARSIZE       ),
-    .M_AXI_ARBURST                     (IFU_SRAM_AXI_ARBURST      ) 
+    .M_AXI_ARBURST                     (IFU_SRAM_AXI_ARBURST      )
 );
-
-
-wire                   [  31:0]         ifu2idu_ins                ;
-wire                   [  31:0]         ifu2idu_pc                 ;
 
 ysyx_23060124_IFU ifu1
 (
@@ -1814,7 +3177,7 @@ ysyx_23060124_ifu_idu_regs ifu2idu_regs(
     .i_ins                             (ins                       ),
     .o_ins                             (ifu2idu_ins               ),
     .clock                             (clock                     ),
-    .reset                             (reset  || pc_update_en  || idu2exu_fence_i),
+    .reset                             (reset  || pc_update_en || idu2exu_fence_i  ),
 
     .icache_hit                        (icache_hit                ),
     .i_pre_valid                       (pc_update_en              ),
@@ -1846,34 +3209,13 @@ ysyx_23060124_IDU idu1(
     .o_jal                             (jal                       ),
     .o_jalr                            (jalr                      ),
     .o_ebreak                          (ebreak                    ),
-    .o_fence_i                         (fence_i                   ) 
+    .o_fence_i                         (fence_i                   )
 );
 
-wire                   [  31:0]         idu2exu_pc                 ;
-wire                   [  31:0]         idu2exu_src1               ;
-wire                   [  31:0]         idu2exu_src2               ;
-wire                   [  31:0]         idu2exu_imm                ;
-wire                   [   1:0]         idu2exu_src_sel1           ;
-wire                   [   2:0]         idu2exu_src_sel2           ;
-wire                   [   3:0]         idu2exu_rd                 ;
-wire                   [   2:0]         idu2exu_exu_opt            ;
-wire                   [   9:0]         idu2exu_alu_opt            ;
-wire                                    idu2exu_wen                ;
-wire                                    idu2exu_csr_wen            ;
-wire                                    idu2exu_mret               ;
-wire                                    idu2exu_ecall              ;
-wire                                    idu2exu_load               ;
-wire                                    idu2exu_store              ;
-wire                                    idu2exu_brch               ;
-wire                                    idu2exu_jal                ;
-wire                                    idu2exu_jalr               ;
-wire                                    idu2exu_ebreak             ;
-wire                                    idu2exu_fence_i            ;
-wire                   [  11:0]         idu2exu_csr_addr           ;
 
 ysyx_23060124_idu_exu_regs idu2exu_regs(
     .clock                             (clock                     ),
-    .reset                             (reset || pc_update_en || idu2exu_fence_i),
+    .reset                             (reset || pc_update_en || idu2exu_fence_i   ),
     .i_pre_valid                       (ifu2idu_valid             ),
     .i_post_ready                      (exu2idu_ready             ),
     .o_pre_ready                       (idu2ifu_ready             ),
@@ -1979,7 +3321,7 @@ ysyx_23060124_EXU exu1(
     .M_AXI_RREADY                      (LSU_SRAM_AXI_RREADY       ),
     .M_AXI_RID                         (LSU_SRAM_AXI_RID          ),
     .M_AXI_RLAST                       (LSU_SRAM_AXI_RLAST        ),
-  //read adress channel
+  //read address channel
     .M_AXI_ARADDR                      (LSU_SRAM_AXI_ARADDR       ),
     .M_AXI_ARVALID                     (LSU_SRAM_AXI_ARVALID      ),
     .M_AXI_ARREADY                     (LSU_SRAM_AXI_ARREADY      ),
@@ -2010,7 +3352,7 @@ wire                                    exu2wbu_mret               ;
 wire                                    exu2wbu_ecall              ;
 wire                   [  31:0]         exu2wbu_res                ;
 wire                                    exu2wbu_ebreak             ;
-wire                                    exu2wbu_next               ;
+// wire                                    exu2wbu_next               ;
 
 ysyx_23060124_exu_wbu_regs exu_wbu_regs (
     .clock                             (clock                     ),
@@ -2077,7 +3419,6 @@ ysyx_23060124_WBU wbu1(
     .o_wbu_csr_wen                     (wbu_csr_wen               ),
     .o_pre_ready                       (wbu2exu_ready             ) 
 );
-
 
 ysyx_23060124_Xbar xbar
 (
@@ -2174,6 +3515,25 @@ ysyx_23060124_Xbar xbar
     .SRAM_RID                          (io_master_rid             ) 
 );
 
+ysyx_23060124_RegisterFile regfile1(
+    .clock                             (clock                     ),
+    .reset                             (reset                     ),
+    .waddr                             (wbu_rd_addr               ),
+    .wdata                             (wbu_rd_wdata              ),
+    .wen                               (wbu_wen                   ),
+//
+    .exu_rd                            (idu2exu_rd                ),
+    .exu_wdata                         (exu_res                   ),
+    .exu_wen                           (idu2exu_wen               ),
+    .wbu_rd                            (exu2wbu_rd_addr           ),
+    .wbu_wdata                         (exu2wbu_res               ),
+    .wbu_wen                           (exu2wbu_wen               ),
+//
+    .raddr1                            (idu_addr_rs1              ),
+    .raddr2                            (idu_addr_rs2              ),
+    .rdata1                            (rs1                       ),
+    .rdata2                            (rs2                       )
+);
 
 CLINT clint
 (
@@ -2200,341 +3560,168 @@ CLINT clint
 // import "DPI-C" function void csr_cnt_dpic    ();
 // import "DPI-C" function void brch_cnt_dpic   ();
 // import "DPI-C" function void jal_cnt_dpic    ();
-// import "DPI-C" function void ifu_start  ();
-// import "DPI-C" function void ifu_end  ();
-// import "DPI-C" function void icache_end  ();
-// import "DPI-C" function void load_start  ();
-// import "DPI-C" function void load_end  ();
-// import "DPI-C" function void store_start  ();
-// import "DPI-C" function void store_end  ();
+// import "DPI-C" function void load_cnt_dpic   ();
+// import "DPI-C" function void store_cnt_dpic  ();
+// import "DPI-C" function void inst_cnt_dpic   ();
+// import "DPI-C" function void ifu_start       ();
+// import "DPI-C" function void ifu_end         ();
+// import "DPI-C" function void icache_end      ();
+// import "DPI-C" function void cache_miss      ();
+// import "DPI-C" function void load_start      ();
+// import "DPI-C" function void load_end        ();
+// import "DPI-C" function void store_start     ();
+// import "DPI-C" function void store_end       ();
 
-
+// // ===========================================================================
+// // Performance Counters — Instruction Mix
+// // Counts at WBU commit point (exu2wbu signals are valid after exu_wbu_regs)
+// // ===========================================================================
 // always @(posedge clock) begin
-//   if(exu2wbu_brch) begin
-//     brch_cnt_dpic();
-//   end
-//   if(exu2wbu_jalr || exu2wbu_jal) begin
-//     jal_cnt_dpic();
-//   end
-//   if(exu2wbu_csr_wen) begin
-//     csr_cnt_dpic();
+//   if (!reset && exu2wbu_valid) begin
+//     inst_cnt_dpic();
+//     if (exu2wbu_brch) begin
+//       brch_cnt_dpic();
+//     end
+//     if (exu2wbu_jal || exu2wbu_jalr) begin
+//       jal_cnt_dpic();
+//     end
+//     if (exu2wbu_csr_wen) begin
+//       csr_cnt_dpic();
+//     end
 //   end
 // end
 
+// // ===========================================================================
+// // Performance Counters — Load / Store Instruction Count
+// // ===========================================================================
 // always @(posedge clock) begin
-//   if(IFU_SRAM_AXI_ARVALID && IFU_SRAM_AXI_ARREADY) begin
-//     ifu_start();
+//   if (!reset) begin
+//     if (LSU_SRAM_AXI_ARVALID && LSU_SRAM_AXI_ARREADY) begin
+//       load_cnt_dpic();
+//     end
+//     if (LSU_SRAM_AXI_AWVALID && LSU_SRAM_AXI_AWREADY) begin
+//       store_cnt_dpic();
+//     end
 //   end
-//   else if(IFU_SRAM_AXI_RREADY && IFU_SRAM_AXI_RLAST) begin
-//     ifu_end();
-//   end
-//   if(icache_hit) begin
-//     icache_end();
-//   end
+// end
 
-//   if(LSU_SRAM_AXI_ARREADY && LSU_SRAM_AXI_ARVALID) begin
-//     load_start();
+// // ===========================================================================
+// // Performance Counters — IFU Access Latency & ICache
+// // - ifu_start : AR handshake (cache miss, fetch begins)
+// // - ifu_end   : last read-data beat (fetch completes)
+// // - icache_end: cache hit   (1-cycle access)
+// // - cache_miss: every AR handshake is a cache miss
+// // ===========================================================================
+// always @(posedge clock) begin
+//   if (!reset) begin
+//     if (IFU_SRAM_AXI_ARVALID && IFU_SRAM_AXI_ARREADY) begin
+//       ifu_start();
+//       cache_miss();
+//     end
+//     if (IFU_SRAM_AXI_RVALID && IFU_SRAM_AXI_RREADY && IFU_SRAM_AXI_RLAST) begin
+//       ifu_end();
+//     end
+//     if (icache_hit) begin
+//       icache_end();
+//     end
 //   end
-//   else if(LSU_SRAM_AXI_RREADY && LSU_SRAM_AXI_RVALID) begin
-//     load_end();
-//   end
+// end
 
-//   if(LSU_SRAM_AXI_AWREADY && LSU_SRAM_AXI_AWVALID) begin
-//     store_start();
-//   end
-//   else if(LSU_SRAM_AXI_BREADY && LSU_SRAM_AXI_BVALID) begin
-//     store_end();
+// // ===========================================================================
+// // Performance Counters — LSU Access Latency
+// // - load_start / load_end   : AR handshake → last R beat
+// // - store_start / store_end : AW handshake → B response
+// // ===========================================================================
+// always @(posedge clock) begin
+//   if (!reset) begin
+//     if (LSU_SRAM_AXI_ARVALID && LSU_SRAM_AXI_ARREADY) begin
+//       load_start();
+//     end
+//     if (LSU_SRAM_AXI_RVALID && LSU_SRAM_AXI_RREADY && LSU_SRAM_AXI_RLAST) begin
+//       load_end();
+//     end
+
+//     if (LSU_SRAM_AXI_AWVALID && LSU_SRAM_AXI_AWREADY) begin
+//       store_start();
+//     end
+//     if (LSU_SRAM_AXI_BVALID && LSU_SRAM_AXI_BREADY) begin
+//       store_end();
+//     end
 //   end
 // end
 
 endmodule
-
-module ysyx_23060124_IFU
-(
-    input              [  31:0]         i_pc_next                  ,
-    input                               clock                      ,
-    input                               rst_n_sync                 ,
-    input                               i_pc_update                ,
-    input                               i_post_ready               ,
-    output             [  31:0]         ins                        ,
-    output reg         [  31:0]         pc_next                    ,
-    //ifu_to_cache
-    output             [  31:0]         req_addr                   ,
-    input              [  31:0]         icache_ins                 ,
-    input                               hit                         
-);
-
-localparam                              RESET_PC = 32'h3000_0000   ;
-
-assign req_addr = pc_next;
-
-always @(posedge  clock or negedge rst_n_sync) begin
-  if (~rst_n_sync) pc_next <= RESET_PC;
-  else if(i_pc_update) pc_next <= i_pc_next;
-  else if(hit && i_post_ready) pc_next <= pc_next + 4;
-  else pc_next <= pc_next;
-end
-
-assign ins = icache_ins;
-
-endmodule
-module ysyx_23060124_ifu_idu_regs (
-    input              [  31:0]         i_pc                       ,
-    input              [  31:0]         i_ins                      ,
-    output reg         [  31:0]         o_pc                       ,
-    output reg         [  31:0]         o_ins                      ,
+module ysyx_23060124_WBU (
     input                               clock                      ,
     input                               reset                      ,
-    // handshake signals
-    input                               icache_hit              ,
     input                               i_pre_valid                ,
-    input                               i_post_ready               ,
-    output                              o_post_valid                
+    input                               i_wen                      ,
+    input              [   3:0]         i_rd_addr                  ,
+    input              [  11:0]         i_csr_addr                 ,
+    input                               i_csr_wen                  ,
+    input                               i_brch                     ,
+    input                               i_jal                      ,
+    input                               i_jalr                     ,
+    input                               i_ebreak                   ,
+    input                               i_mret                     ,
+    input                               i_ecall                    ,
+    input              [  31:0]         i_pc_next                  ,
+    // input                               i_next                     ,
+  // ecall and mret
 
+    input              [  31:0]         i_res                      ,
+
+    output reg         [  31:0]         o_pc_next                  ,
+    output             [  31:0]         o_rd_wdata                 ,
+    output             [  31:0]         o_csr_rd_wdata             ,
+    output                              o_wbu_wen                  ,
+    output                              o_wbu_csr_wen              ,
+    output             [   3:0]         o_rd_addr                  ,
+    output             [  11:0]         o_csr_addr                 ,
+
+    output reg                          o_pre_ready                ,
+    output reg                          o_pc_update                 
 );
 
-reg post_valid;
-assign o_post_valid = i_post_ready && icache_hit;
 
-// always @(posedge clock or posedge reset) begin
-//     if(reset) begin
-//         post_valid <= 1'b0;   
-//     end
-//     else if(icache_hit) begin
-//         post_valid <= 1'b1;
-//     end
-//     else if(~icache_hit)begin
-//         post_valid <= 1'b0;
-//     end
-// end
-
+assign o_rd_wdata       = i_res;
+assign o_csr_rd_wdata   = i_res;
+assign o_wbu_wen        = i_wen ;
+assign o_wbu_csr_wen    = i_csr_wen ;
+assign o_rd_addr        =  i_rd_addr ;
+assign o_csr_addr       =  i_csr_addr;
 
 always @(posedge clock or posedge reset) begin
-    if(reset) begin
-        o_pc <= 32'h0;
-        o_ins <= 32'h0;
-    end
-    else if(icache_hit && i_post_ready) begin
-        o_pc <= i_pc;
-        o_ins <= i_ins;
-    end
-    else if(~icache_hit && i_post_ready) begin
-        o_pc <= 32'h0;
-        o_ins <= 32'h0;
-    end
-    else if(icache_hit && ~i_post_ready) begin
-        o_pc <= o_pc;
-        o_ins <= o_ins;
-    end
+  if(reset) begin
+    o_pre_ready <= 1'b1;
+  end
+  else begin
+    o_pre_ready <= o_pre_ready;
+  end
 end
 
-endmodule   module ysyx_23060124__icache #(
-    parameter                           ADDR_WIDTH = 32            ,
-    parameter                           DATA_WIDTH = 32            ,
-    parameter                           CACHE_SIZE = 16            ,// Number of cache blocks 
-    parameter                           WAY_NUMS = 2               ,// Block size in bytes
-    parameter                           BYTES_NUMS = 8             
-)
-(
-   //read data channel
-    input              [  31:0]         M_AXI_RDATA                ,
-    input              [   1:0]         M_AXI_RRESP                ,
-    input                               M_AXI_RVALID               ,
-    output                              M_AXI_RREADY               ,
-    input              [   3:0]         M_AXI_RID                  ,
-    input                               M_AXI_RLAST                ,
-
-    //read adress channel
-    output             [  31:0]         M_AXI_ARADDR               ,
-    output                              M_AXI_ARVALID              ,
-    input                               M_AXI_ARREADY              ,
-    output             [   3:0]         M_AXI_ARID                 ,
-    output             [   7:0]         M_AXI_ARLEN                ,
-    output             [   2:0]         M_AXI_ARSIZE               ,
-    output             [   1:0]         M_AXI_ARBURST              ,
-
-    input                               clock                        ,
-    input                               rst_n_sync                 ,
-    input              [ADDR_WIDTH-1:0] addr                       ,
-    output             [DATA_WIDTH-1:0] data                       ,
-
-    input                               fence_i                    ,
-    output                              hit                         
-);
-localparam                              BLOCK_SIZE = 4*BYTES_NUMS  ;
-localparam                              ARLEN   =  BLOCK_SIZE/4 - 1;
-localparam                              RINDEX = $clog2(BYTES_NUMS);//index = log2(CACHE_SIZE) = 3 = n
-localparam                              INDEX_BITS = $clog2(WAY_NUMS);//index = log2(CACHE_SIZE) = 1
-localparam                              OFFSET_BITS = $clog2(BLOCK_SIZE);//offset = log2(BLOCK_SIZE) = 5 = m
-localparam                              TAG_BITS = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;//tag = 32 - 5  -1 = 26
-
-// AXI
-/******************************regs*****************************/
-    // Initiate AXI transactions
-reg                                         axi_arvalid                ;
-reg                                         axi_rready                 ;
-reg                    [   RINDEX-1:0]      read_index                 ;
-reg                    [  31-OFFSET_BITS:0] araddr                     ;
-reg                                         idle                       ;
-/******************************nets*****************************/
-    // AXI clock signal
-    // AXI active low reset signal
-/******************************combinational logic*****************************/
-        
-    assign M_AXI_ARADDR = {araddr, {OFFSET_BITS{1'b0}}};
-    // assign M_AXI_ARADDR     = addr;
-    assign M_AXI_ARVALID    = axi_arvalid;
-    assign M_AXI_ARID       = 'b0;
-    assign M_AXI_ARLEN      = ARLEN;
-    assign M_AXI_ARSIZE     = 3'b010;
-    assign M_AXI_ARBURST    = 2'b01; //incrementing burst
-    assign M_AXI_RREADY     = axi_rready; 
-
-
-// Cache control logic 
-always @(posedge clock)
-begin
-    if(~rst_n_sync) 
-        begin
-            cache_valid <= 'b0;
-        end
-    else if(M_AXI_ARVALID && ~M_AXI_ARREADY) begin
-        cache_tag[index]   <= tag;
-        cache_valid[index] <= 1'b0;                                                       
-    end
-    else if(M_AXI_RLAST) begin
-        cache_valid[index] <= 1'b1;
-    end
-    else if(fence_i) begin
-        cache_valid <= 'b0;
-    end
-end
-	  always @(posedge clock)                                       
-	  begin                                                              
-	    if (rst_n_sync == 0)                                          
-	      begin                                                          
-	        araddr <= 'b0;    
-            idle <= 1'b1;                                       
-	      end
-        else if(!hit && idle) begin
-            araddr <= addr[31:OFFSET_BITS];
-            idle <= 1'b0;
-        end
-        else if(M_AXI_RLAST && M_AXI_RREADY) begin
-            if(hit) begin
-                araddr <= 'b0;
-                idle <= 1'b1;
-            end
-            else araddr <= addr[31:OFFSET_BITS];
-        end                                                                                  
-	    else                                                             
-	      araddr <= araddr;     
-	  end                                                                
-
-//----------------------------
-//Read Address Channel
-//----------------------------       
-    // A new axi_arvalid is asserted when there is a hit read address              
-    // available by the master. start_single_read triggers a new read                
-    // transaction                                                                   
-    always @(posedge clock)                                                     
-    begin                                                                            
-    if (rst_n_sync == 0)                                                   
-        begin                                                                        
-        axi_arvalid <= 1'b0;                                                       
-        end                                                                          
-    //Signal a new read address command is available by user logic                 
-    else if (!hit && idle)                                                    
-        begin                                                                        
-        axi_arvalid <= 1'b1;     
-        end                                                                          
-    //RAddress accepted by interconnect/slave (issue of M_AXI_ARREADY by slave)    
-    else if (axi_arvalid && M_AXI_ARREADY)                                         
-        begin                                                                        
-        axi_arvalid <= 1'b0;
-        end
-    else if(M_AXI_RLAST && M_AXI_RREADY && (!hit)) begin
-        axi_arvalid <= 1'b1;
-    end       
-    else axi_arvalid <= axi_arvalid;                                                             
-    // retain the previous value                                                   
-    end                                                                              
-
-    // read index
-    always @(posedge clock)                                                     
-    begin                                                                            
-    if (M_AXI_ARVALID && M_AXI_ARREADY)                                                   
-        begin                                                                        
-        read_index <= 'b0;                                                       
-        end                                                                          
-    //Signal a new read address command is available by user logic                 
-    else if(M_AXI_RVALID && ~M_AXI_RREADY) begin
-        read_index <= read_index + 1;   
-    end                                        
-    else read_index <= read_index;          
-    end                   
-//--------------------------------
-//Read Data (and Response) Channel
-//--------------------------------
-
-//The Read Data channel returns the results of the read request 
-//The master will accept the read data by asserting axi_rready
-//when there is a hit read data available.
-//While not necessary per spec, it is advisable to reset READY signals in
-//case of differing reset latencies between master/slave.
-
-    always @(posedge clock)                                    
-    begin                                                                 
-    if (rst_n_sync == 0)                                                                                    
-        begin                                                             
-        axi_rready <= 1'b0;                                             
-        end                                                                                       
-    else if (M_AXI_RVALID && ~axi_rready)                               
-        begin                                                             
-        axi_rready <= 1'b1;                                             
-        end                                                               
-    // deassert after one clock cycle                                   
-    else if (axi_rready)                                                
-        begin                                                             
-        axi_rready <= 1'b0;                                             
-        end                                                                                                      
-    end 
-
-reg                    [DATA_WIDTH-1:0] cache_data  [WAY_NUMS-1:0][BYTES_NUMS-1:0]                           ;
-reg                    [TAG_BITS-1:0]   cache_tag   [WAY_NUMS-1:0]                           ;
-reg                    [WAY_NUMS-1:0]   cache_valid                ;
-
-wire [TAG_BITS-1:0]   tag   = araddr[ADDR_WIDTH-OFFSET_BITS-1:INDEX_BITS]; // tag = M_AXI_ARADDR[31:6]
-wire [INDEX_BITS-1:0] index = araddr[OFFSET_BITS+INDEX_BITS-OFFSET_BITS-1:0]; // index = M_AXI_ARADDR[4+2:4]
-
-
-always @(posedge clock) begin
-    if(M_AXI_RVALID && ~axi_rready) begin
-            cache_data [index][read_index] <= M_AXI_RDATA;
-        end
+always @(posedge clock or posedge reset) begin
+  if(reset) begin
+    o_pc_update <= 1'b0;
+    o_pc_next <= 32'b0;
+  end
+  else if(~o_pc_update) begin
+    o_pc_update <= i_jal || i_jalr || i_brch  || i_ecall || i_mret;
+    o_pc_next <= i_pc_next;
+  end
+  else if(o_pc_update) begin
+    o_pc_update <= 1'b0;
+    o_pc_next <= 32'b0;
+  end
 end
 
-
-//TODO: hit_tag
-assign data = cache_data[hit_index][hit_offset[OFFSET_BITS-1:2]];
-
-wire                   [TAG_BITS-1:0]   hit_tag                    ;
-wire                   [INDEX_BITS-1:0] hit_index                  ;
-wire                   [OFFSET_BITS-1:0]hit_offset                 ;
-
-assign hit_tag    = addr[ADDR_WIDTH-1               : INDEX_BITS+OFFSET_BITS];
-assign hit_index  = addr[OFFSET_BITS+INDEX_BITS-1   : OFFSET_BITS];
-assign hit_offset = addr[OFFSET_BITS-1              :0];
-
-assign hit  =  cache_valid[hit_index] && (cache_tag[hit_index] == hit_tag);
-
-
-// import "DPI-C" function void cache_miss ();
-
-// always @(posedge clock) begin
-//  if(!hit && idle) begin
-//     cache_miss();
+// reg diff;
+// always @(posedge clock)begin
+//   if(reset) begin
+//     diff <= 1'b0;
 //   end
+//   // else diff <= i_next && ((i_res != 32'b0) || (i_rd_addr != 4'b0) || (i_wen != 1'b0) || (i_jal || i_jalr || i_brch || i_ecall || i_mret) != 0);
+//   else diff <= i_next;
 // end
 
 endmodule

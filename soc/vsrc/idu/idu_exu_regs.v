@@ -59,7 +59,7 @@ module ysyx_23060124_idu_exu_regs (
     output reg                          o_brch                     ,
     output reg                          o_jal                      ,
     output reg                          o_ebreak                   ,
-    output reg                          o_fence_i                  ,
+    output reg                          o_fence_i,
     //
     output reg                          o_jalr                      
 );
@@ -111,7 +111,7 @@ always @(posedge clock or posedge reset) begin
         o_jal           <= 1'b0;
         o_jalr          <= 1'b0;
         o_ebreak        <= 1'b0;
-        o_fence_i       <= 1'b0;
+        o_fence_i       <= 1'b0;    
         //
         o_csr_addr      <= 12'b0;
 
@@ -162,7 +162,7 @@ always @(posedge clock or posedge reset) begin
         o_jal           <= 1'b0;
         o_jalr          <= 1'b0;
         o_ebreak        <= 1'b0;
-        o_fence_i       <= 1'b0;
+        o_fence_i       <= 1'b0;    
         //
         o_csr_addr      <= 12'b0;
     end

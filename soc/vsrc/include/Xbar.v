@@ -107,7 +107,7 @@ wire lsu_ram_finish;
 assign ifu_req = IFU_ARVALID;
 assign lsu_req = LSU_AWVALID || LSU_ARVALID;
 assign ifu_ram_finish = (SRAM_RLAST && IFU_RREADY);
-assign lsu_ram_finish = SRAM_BREADY || LSU_RREADY;
+assign lsu_ram_finish = (SRAM_BVALID && LSU_BREADY) || (SRAM_RLAST && LSU_RREADY);
 
 reg [2:0] state;
 localparam IDLE         = 3'b000;
@@ -115,7 +115,7 @@ localparam LSU_CLINT    = 3'b001;
 localparam IFU_RAM      = 3'b010;
 localparam LSU_RAM      = 3'b100;
 
-    always @(posedge clock) begin
+    always @(posedge clock or negedge RESETN) begin
         if (RESETN == 1'b0) begin
             state <= IDLE;
         end else begin

@@ -26,7 +26,7 @@ reg [12:0] mstatus;
 reg [31:0] mepc;
 reg [31:0] mtvec;
 
-always @(posedge  clock) begin
+always @(posedge  clock or posedge reset) begin
     if(reset) begin
         mstatus <= 13'b0;
         mepc <= 32'b0;

@@ -31,8 +31,6 @@ module ysyx_23060124_WBU (
 );
 
 
-wire [31:0] pc_next;
-
 assign o_rd_wdata       = i_res;
 assign o_csr_rd_wdata   = i_res;
 assign o_wbu_wen        = i_wen ;
@@ -40,7 +38,7 @@ assign o_wbu_csr_wen    = i_csr_wen ;
 assign o_rd_addr        =  i_rd_addr ;
 assign o_csr_addr       =  i_csr_addr;
 
-always @(posedge clock) begin
+always @(posedge clock or posedge reset) begin
   if(reset) begin
     o_pre_ready <= 1'b1;
   end
@@ -49,28 +47,21 @@ always @(posedge clock) begin
   end
 end
 
-always @(posedge clock) begin
+always @(posedge clock or posedge reset) begin
   if(reset) begin
     o_pc_update <= 1'b0;
+    o_pc_next <= 32'b0;
   end
   else if(~o_pc_update) begin
     o_pc_update <= i_jal || i_jalr || i_brch  || i_ecall || i_mret;
+    o_pc_next <= i_pc_next;
   end
   else if(o_pc_update) begin
     o_pc_update <= 1'b0;
-  end
-end
-
-always @(posedge clock) begin
-  if(reset) begin
     o_pc_next <= 32'b0;
   end
-  else begin
-    o_pc_next <= i_pc_next;
-  end
 end
 
-// `ifdef DIFF_TEST
 // reg diff;
 // always @(posedge clock)begin
 //   if(reset) begin
@@ -79,6 +70,5 @@ end
 //   // else diff <= i_next && ((i_res != 32'b0) || (i_rd_addr != 4'b0) || (i_wen != 1'b0) || (i_jal || i_jalr || i_brch || i_ecall || i_mret) != 0);
 //   else diff <= i_next;
 // end
-// `endif 
 
 endmodule
