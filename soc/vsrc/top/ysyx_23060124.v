@@ -109,6 +109,7 @@ wire                   [ISA_WIDTH-1:0]  ifu_req_addr               ;
 wire                                    icache_hit                 ;
 wire                                    fence_i                    ;
 
+
 //write address channel  
 wire                   [  31:0]         LSU_SRAM_AXI_AWADDR        ;
 wire                                    LSU_SRAM_AXI_AWVALID       ;
@@ -117,7 +118,7 @@ wire                   [   7:0]         LSU_SRAM_AXI_AWLEN         ;
 wire                   [   2:0]         LSU_SRAM_AXI_AWSIZE        ;
 wire                   [   1:0]         LSU_SRAM_AXI_AWBURST       ;
 wire                   [   3:0]         LSU_SRAM_AXI_AWID          ;
-//write data channel,
+//write data channel
 wire                                    LSU_SRAM_AXI_WVALID        ;
 wire                                    LSU_SRAM_AXI_WREADY        ;
 wire                   [  31:0]         LSU_SRAM_AXI_WDATA         ;
@@ -131,8 +132,7 @@ wire                                    IFU_SRAM_AXI_RVALID, LSU_SRAM_AXI_RVALID
 wire                                    IFU_SRAM_AXI_RREADY, LSU_SRAM_AXI_RREADY;
 wire                   [   3:0]         IFU_SRAM_AXI_RID,LSU_SRAM_AXI_RID;
 wire                                    IFU_SRAM_AXI_RLAST,LSU_SRAM_AXI_RLAST;
-    
-//read adress channel
+//read address channel
 wire                   [  31:0]         IFU_SRAM_AXI_ARADDR, LSU_SRAM_AXI_ARADDR;
 wire                                    IFU_SRAM_AXI_ARVALID, LSU_SRAM_AXI_ARVALID;
 wire                                    IFU_SRAM_AXI_ARREADY, LSU_SRAM_AXI_ARREADY;
@@ -406,7 +406,7 @@ ysyx_23060124_EXU exu1(
     .M_AXI_RREADY                      (LSU_SRAM_AXI_RREADY       ),
     .M_AXI_RID                         (LSU_SRAM_AXI_RID          ),
     .M_AXI_RLAST                       (LSU_SRAM_AXI_RLAST        ),
-  //read adress channel
+  //read address channel
     .M_AXI_ARADDR                      (LSU_SRAM_AXI_ARADDR       ),
     .M_AXI_ARVALID                     (LSU_SRAM_AXI_ARVALID      ),
     .M_AXI_ARREADY                     (LSU_SRAM_AXI_ARREADY      ),
@@ -504,7 +504,6 @@ ysyx_23060124_WBU wbu1(
     .o_wbu_csr_wen                     (wbu_csr_wen               ),
     .o_pre_ready                       (wbu2exu_ready             ) 
 );
-
 
 ysyx_23060124_Xbar xbar
 (
@@ -643,54 +642,97 @@ CLINT clint
 );
 
 
-// import "DPI-C" function void csr_cnt_dpic    ();
-// import "DPI-C" function void brch_cnt_dpic   ();
-// import "DPI-C" function void jal_cnt_dpic    ();
-// import "DPI-C" function void ifu_start  ();
-// import "DPI-C" function void ifu_end  ();
-// import "DPI-C" function void icache_end  ();
-// import "DPI-C" function void load_start  ();
-// import "DPI-C" function void load_end  ();
-// import "DPI-C" function void store_start  ();
-// import "DPI-C" function void store_end  ();
+import "DPI-C" function void csr_cnt_dpic    ();
+import "DPI-C" function void brch_cnt_dpic   ();
+import "DPI-C" function void jal_cnt_dpic    ();
+import "DPI-C" function void load_cnt_dpic   ();
+import "DPI-C" function void store_cnt_dpic  ();
+import "DPI-C" function void inst_cnt_dpic   ();
+import "DPI-C" function void ifu_start       ();
+import "DPI-C" function void ifu_end         ();
+import "DPI-C" function void icache_end      ();
+import "DPI-C" function void cache_miss      ();
+import "DPI-C" function void load_start      ();
+import "DPI-C" function void load_end        ();
+import "DPI-C" function void store_start     ();
+import "DPI-C" function void store_end       ();
 
+// ===========================================================================
+// Performance Counters — Instruction Mix
+// Counts at WBU commit point (exu2wbu signals are valid after exu_wbu_regs)
+// ===========================================================================
+always @(posedge clock) begin
+  if (!reset && exu2wbu_valid) begin
+    inst_cnt_dpic();
+    if (exu2wbu_brch) begin
+      brch_cnt_dpic();
+    end
+    if (exu2wbu_jal || exu2wbu_jalr) begin
+      jal_cnt_dpic();
+    end
+    if (exu2wbu_csr_wen) begin
+      csr_cnt_dpic();
+    end
+  end
+end
 
-// always @(posedge clock) begin
-//   if(exu2wbu_brch) begin
-//     brch_cnt_dpic();
-//   end
-//   if(exu2wbu_jalr || exu2wbu_jal) begin
-//     jal_cnt_dpic();
-//   end
-//   if(exu2wbu_csr_wen) begin
-//     csr_cnt_dpic();
-//   end
-// end
+// ===========================================================================
+// Performance Counters — Load / Store Instruction Count
+// ===========================================================================
+always @(posedge clock) begin
+  if (!reset) begin
+    if (LSU_SRAM_AXI_ARVALID && LSU_SRAM_AXI_ARREADY) begin
+      load_cnt_dpic();
+    end
+    if (LSU_SRAM_AXI_AWVALID && LSU_SRAM_AXI_AWREADY) begin
+      store_cnt_dpic();
+    end
+  end
+end
 
-// always @(posedge clock) begin
-//   if(IFU_SRAM_AXI_ARVALID && IFU_SRAM_AXI_ARREADY) begin
-//     ifu_start();
-//   end
-//   else if(IFU_SRAM_AXI_RREADY && IFU_SRAM_AXI_RLAST) begin
-//     ifu_end();
-//   end
-//   if(icache_hit) begin
-//     icache_end();
-//   end
+// ===========================================================================
+// Performance Counters — IFU Access Latency & ICache
+// - ifu_start : AR handshake (cache miss, fetch begins)
+// - ifu_end   : last read-data beat (fetch completes)
+// - icache_end: cache hit   (1-cycle access)
+// - cache_miss: every AR handshake is a cache miss
+// ===========================================================================
+always @(posedge clock) begin
+  if (!reset) begin
+    if (IFU_SRAM_AXI_ARVALID && IFU_SRAM_AXI_ARREADY) begin
+      ifu_start();
+      cache_miss();
+    end
+    if (IFU_SRAM_AXI_RVALID && IFU_SRAM_AXI_RREADY && IFU_SRAM_AXI_RLAST) begin
+      ifu_end();
+    end
+    if (icache_hit) begin
+      icache_end();
+    end
+  end
+end
 
-//   if(LSU_SRAM_AXI_ARREADY && LSU_SRAM_AXI_ARVALID) begin
-//     load_start();
-//   end
-//   else if(LSU_SRAM_AXI_RREADY && LSU_SRAM_AXI_RVALID) begin
-//     load_end();
-//   end
+// ===========================================================================
+// Performance Counters — LSU Access Latency
+// - load_start / load_end   : AR handshake → last R beat
+// - store_start / store_end : AW handshake → B response
+// ===========================================================================
+always @(posedge clock) begin
+  if (!reset) begin
+    if (LSU_SRAM_AXI_ARVALID && LSU_SRAM_AXI_ARREADY) begin
+      load_start();
+    end
+    if (LSU_SRAM_AXI_RVALID && LSU_SRAM_AXI_RREADY && LSU_SRAM_AXI_RLAST) begin
+      load_end();
+    end
 
-//   if(LSU_SRAM_AXI_AWREADY && LSU_SRAM_AXI_AWVALID) begin
-//     store_start();
-//   end
-//   else if(LSU_SRAM_AXI_BREADY && LSU_SRAM_AXI_BVALID) begin
-//     store_end();
-//   end
-// end
+    if (LSU_SRAM_AXI_AWVALID && LSU_SRAM_AXI_AWREADY) begin
+      store_start();
+    end
+    if (LSU_SRAM_AXI_BVALID && LSU_SRAM_AXI_BREADY) begin
+      store_end();
+    end
+  end
+end
 
 endmodule

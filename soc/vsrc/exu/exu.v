@@ -79,15 +79,14 @@ parameter BGEU  = 3'b111;
 
 wire                   [  31:0]         alu_res, load_res          ;
 wire                                    if_lsu                     ;
+wire                                    lsu_done                   ;
 
 reg post_valid;
 
 assign if_lsu = i_load || i_store;
-assign o_post_valid =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
-                       post_valid;
+assign o_post_valid =  if_lsu  ?  lsu_done : post_valid;
 
-assign o_pre_ready  =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
-                       1'b1;
+assign o_pre_ready  =  if_lsu  ?  lsu_done : 1'b1;
 
 always @(posedge clock or posedge reset) begin
     if(reset) begin
@@ -196,7 +195,8 @@ ysyx_23060124_LSU exu_lsu(
     .M_AXI_BREADY                      (M_AXI_BREADY              ),
     .M_AXI_BID                         (M_AXI_BID                 ),
   //handshake
-    .o_pre_ready                       (o_pre_ready               )
+    .o_pre_ready                       (o_pre_ready               ),
+    .lsu_done                          (lsu_done                  )
 );
 
 wire beq, bne;

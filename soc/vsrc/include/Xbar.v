@@ -107,7 +107,7 @@ wire lsu_ram_finish;
 assign ifu_req = IFU_ARVALID;
 assign lsu_req = LSU_AWVALID || LSU_ARVALID;
 assign ifu_ram_finish = (SRAM_RLAST && IFU_RREADY);
-assign lsu_ram_finish = SRAM_BREADY || LSU_RREADY;
+assign lsu_ram_finish = (SRAM_BVALID && LSU_BREADY) || (SRAM_RLAST && LSU_RREADY);
 
 reg [2:0] state;
 localparam IDLE         = 3'b000;

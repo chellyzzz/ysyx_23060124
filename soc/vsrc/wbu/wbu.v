@@ -31,8 +31,6 @@ module ysyx_23060124_WBU (
 );
 
 
-wire [31:0] pc_next;
-
 assign o_rd_wdata       = i_res;
 assign o_csr_rd_wdata   = i_res;
 assign o_wbu_wen        = i_wen ;

@@ -232,6 +232,571 @@ always_comb begin
 end
 
 endmodule
+// // ============================================================
+// // Phase 1: Write-Through, No-Write-Allocate Data Cache
+// // ============================================================
+// //
+// // Sits between LSU AXI ports and AXI Crossbar.
+// // - Cacheable loads:  answered from cache if hit, else AXI burst refill
+// // - Cacheable stores: write-through to AXI, update cache if hit
+// // - Non-cacheable:    pass through directly to AXI (MMIO)
+// module ysyx_23060124__dcache #(
+//     parameter ADDR_WIDTH      = 32,
+//     parameter DATA_WIDTH      = 32,
+//     parameter SET_NUMS        = 4 ,   // Number of cache sets
+//     parameter WAY_NUMS        = 4 ,   // Number of ways (associativity)
+//     parameter WORDS_PER_BLOCK = 4 ,   // 32-bit words per block (16 bytes)
+
+//     // Cacheable address ranges (inclusive start, exclusive end)
+//     // RAM / ROM regions — normal memory, safe to cache
+//     parameter CACHE_SRAM_START  = 32'h0f000000,  // SRAM  8KB
+//     parameter CACHE_SRAM_END    = 32'h0f002000,
+//     parameter CACHE_MROM_START  = 32'h20000000,  // MROM  4KB (read-only)
+//     parameter CACHE_MROM_END    = 32'h20001000,
+//     parameter CACHE_FLASH_START = 32'h30000000,  // Flash 256MB (read-only)
+//     parameter CACHE_FLASH_END   = 32'h40000000,
+//     parameter CACHE_PSRAM_START = 32'h80000000,  // PSRAM 512MB
+//     parameter CACHE_PSRAM_END   = 32'ha0000000,
+//     parameter CACHE_SDRAM_START = 32'ha0000000,  // SDRAM 512MB
+//     parameter CACHE_SDRAM_END   = 32'hc0000000
+// )(
+//     input                               clock,
+//     input                               rst_n_sync,
+
+//     // ── LSU side (upstream, directly from LSU AXI ports) ──
+//     // Write address channel (LSU → DCache)
+//     input      [ADDR_WIDTH-1:0]         S_AXI_AWADDR,
+//     input                               S_AXI_AWVALID,
+//     output                              S_AXI_AWREADY,
+//     input      [7:0]                    S_AXI_AWLEN,
+//     input      [2:0]                    S_AXI_AWSIZE,
+//     input      [1:0]                    S_AXI_AWBURST,
+//     input      [3:0]                    S_AXI_AWID,
+
+//     // Write data channel (LSU → DCache)
+//     input                               S_AXI_WVALID,
+//     output                              S_AXI_WREADY,
+//     input      [DATA_WIDTH-1:0]         S_AXI_WDATA,
+//     input      [3:0]                    S_AXI_WSTRB,
+//     input                               S_AXI_WLAST,
+
+//     // Write response channel (DCache → LSU)
+//     output     [1:0]                    S_AXI_BRESP,
+//     output                              S_AXI_BVALID,
+//     input                               S_AXI_BREADY,
+//     output     [3:0]                    S_AXI_BID,
+
+//     // Read address channel (LSU → DCache)
+//     input      [ADDR_WIDTH-1:0]         S_AXI_ARADDR,
+//     input                               S_AXI_ARVALID,
+//     output                              S_AXI_ARREADY,
+//     input      [3:0]                    S_AXI_ARID,
+//     input      [7:0]                    S_AXI_ARLEN,
+//     input      [2:0]                    S_AXI_ARSIZE,
+//     input      [1:0]                    S_AXI_ARBURST,
+
+//     // Read data channel (DCache → LSU)
+//     output     [DATA_WIDTH-1:0]         S_AXI_RDATA,
+//     output     [1:0]                    S_AXI_RRESP,
+//     output                              S_AXI_RVALID,
+//     input                               S_AXI_RREADY,
+//     output     [3:0]                    S_AXI_RID,
+//     output                              S_AXI_RLAST,
+
+//     // ── Memory side (downstream, to AXI Crossbar) ──
+//     // Write address channel (DCache → Crossbar)
+//     output     [ADDR_WIDTH-1:0]         M_AXI_AWADDR,
+//     output                              M_AXI_AWVALID,
+//     input                               M_AXI_AWREADY,
+//     output     [7:0]                    M_AXI_AWLEN,
+//     output     [2:0]                    M_AXI_AWSIZE,
+//     output     [1:0]                    M_AXI_AWBURST,
+//     output     [3:0]                    M_AXI_AWID,
+
+//     // Write data channel (DCache → Crossbar)
+//     output                              M_AXI_WVALID,
+//     input                               M_AXI_WREADY,
+//     output     [DATA_WIDTH-1:0]         M_AXI_WDATA,
+//     output     [3:0]                    M_AXI_WSTRB,
+//     output                              M_AXI_WLAST,
+
+//     // Write response channel (Crossbar → DCache)
+//     input      [1:0]                    M_AXI_BRESP,
+//     input                               M_AXI_BVALID,
+//     output                              M_AXI_BREADY,
+//     input      [3:0]                    M_AXI_BID,
+
+//     // Read address channel (DCache → Crossbar)
+//     output     [ADDR_WIDTH-1:0]         M_AXI_ARADDR,
+//     output                              M_AXI_ARVALID,
+//     input                               M_AXI_ARREADY,
+//     output     [3:0]                    M_AXI_ARID,
+//     output     [7:0]                    M_AXI_ARLEN,
+//     output     [2:0]                    M_AXI_ARSIZE,
+//     output     [1:0]                    M_AXI_ARBURST,
+
+//     // Read data channel (Crossbar → DCache)
+//     input      [DATA_WIDTH-1:0]         M_AXI_RDATA,
+//     input      [1:0]                    M_AXI_RRESP,
+//     input                               M_AXI_RVALID,
+//     output                              M_AXI_RREADY,
+//     input      [3:0]                    M_AXI_RID,
+//     input                               M_AXI_RLAST
+// );
+
+// `define DCACHE_DEBUG 1
+
+// // ============================================================
+// // Derived Parameters
+// // ============================================================
+// localparam BLOCK_SIZE     = 4 * WORDS_PER_BLOCK;               // bytes per block
+// localparam REFILL_BEATS   = WORDS_PER_BLOCK;                   // AXI burst beats for refill
+// localparam ARLEN_REFILL   = REFILL_BEATS - 1;                  // AXI ARLEN for refill burst
+// localparam WORD_IDX_BITS  = $clog2(WORDS_PER_BLOCK);           // bits to index word in block
+// localparam INDEX_BITS     = $clog2(SET_NUMS);                  // bits for set index
+// localparam OFFSET_BITS    = $clog2(BLOCK_SIZE);                // byte offset bits
+// localparam TAG_BITS       = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;
+// localparam PLRU_BITS      = WAY_NUMS - 1;                      // 3 for 4-way
+
+// // ============================================================
+// // Cache Storage [set][way]
+// // ============================================================
+// reg [DATA_WIDTH-1:0]  cache_data  [SET_NUMS-1:0][WAY_NUMS-1:0][WORDS_PER_BLOCK-1:0];
+// reg [TAG_BITS-1:0]    cache_tag   [SET_NUMS-1:0][WAY_NUMS-1:0];
+// reg                   cache_valid [SET_NUMS-1:0][WAY_NUMS-1:0];
+
+// // ============================================================
+// // PLRU State (3-bit binary tree per set, same as ICache)
+// // ============================================================
+// reg [PLRU_BITS-1:0] plru [SET_NUMS-1:0];
+
+// // ============================================================
+// // Cacheability Check
+// // ============================================================
+// function is_cacheable;
+//     input [ADDR_WIDTH-1:0] a;
+//     begin
+//         is_cacheable = (a >= CACHE_SDRAM_START && a < CACHE_SDRAM_END);
+//     end
+// endfunction
+
+// // ============================================================
+// // State Machine
+// // ============================================================
+// localparam ST_IDLE        = 3'd0;
+// localparam ST_REFILL_AR   = 3'd1;  // send AR for cache line refill
+// localparam ST_REFILL_R    = 3'd2;  // receive burst R data
+// localparam ST_BYPASS_AR   = 3'd3;  // forward uncached read AR
+// localparam ST_BYPASS_R    = 3'd4;  // forward uncached read R
+// localparam ST_STORE_PASS  = 3'd5;  // write-through store (pass AW/W/B)
+
+// reg [2:0] state;
+
+// // ============================================================
+// // Address Decomposition (live, from current request)
+// // ============================================================
+// wire [TAG_BITS-1:0]    req_tag    = S_AXI_ARADDR[ADDR_WIDTH-1 : INDEX_BITS + OFFSET_BITS];
+// wire [INDEX_BITS-1:0]  req_index  = S_AXI_ARADDR[INDEX_BITS + OFFSET_BITS - 1 : OFFSET_BITS];
+// wire [OFFSET_BITS-1:0] req_offset = S_AXI_ARADDR[OFFSET_BITS-1 : 0];
+
+// // ============================================================
+// // Latched Request Registers
+// // ============================================================
+// reg [ADDR_WIDTH-1:0]   lat_addr;       // full latched address
+// reg [3:0]              lat_arid;
+// reg [2:0]              lat_arsize;
+// reg                    lat_cacheable;
+
+// wire [TAG_BITS-1:0]    lat_tag    = lat_addr[ADDR_WIDTH-1 : INDEX_BITS + OFFSET_BITS];
+// wire [INDEX_BITS-1:0]  lat_index  = lat_addr[INDEX_BITS + OFFSET_BITS - 1 : OFFSET_BITS];
+// wire [OFFSET_BITS-1:0] lat_offset = lat_addr[OFFSET_BITS-1 : 0];
+
+// // ============================================================
+// // Hit Detection (combinational, for latched address during refill)
+// // ============================================================
+// wire way0_hit = cache_valid[lat_index][0] && (cache_tag[lat_index][0] == lat_tag);
+// wire way1_hit = cache_valid[lat_index][1] && (cache_tag[lat_index][1] == lat_tag);
+// wire way2_hit = cache_valid[lat_index][2] && (cache_tag[lat_index][2] == lat_tag);
+// wire way3_hit = cache_valid[lat_index][3] && (cache_tag[lat_index][3] == lat_tag);
+// wire cache_hit = way0_hit | way1_hit | way2_hit | way3_hit;
+
+// wire [1:0] hit_way = way0_hit ? 2'd0 :
+//                      way1_hit ? 2'd1 :
+//                      way2_hit ? 2'd2 : 2'd3;
+
+// // Hit data output
+// wire [DATA_WIDTH-1:0] hit_rdata_word =
+//     way0_hit ? cache_data[lat_index][0][lat_offset[OFFSET_BITS-1:2]] :
+//     way1_hit ? cache_data[lat_index][1][lat_offset[OFFSET_BITS-1:2]] :
+//     way2_hit ? cache_data[lat_index][2][lat_offset[OFFSET_BITS-1:2]] :
+//                cache_data[lat_index][3][lat_offset[OFFSET_BITS-1:2]] ;
+
+// // ============================================================
+// // Store Hit Detection (for write-through cache update on store)
+// // ============================================================
+// wire [TAG_BITS-1:0]    st_tag   = S_AXI_AWADDR[ADDR_WIDTH-1 : INDEX_BITS + OFFSET_BITS];
+// wire [INDEX_BITS-1:0]  st_index = S_AXI_AWADDR[INDEX_BITS + OFFSET_BITS - 1 : OFFSET_BITS];
+// wire [OFFSET_BITS-1:0] st_offset = S_AXI_AWADDR[OFFSET_BITS-1 : 0];
+
+// wire st_way0_hit = cache_valid[st_index][0] && (cache_tag[st_index][0] == st_tag);
+// wire st_way1_hit = cache_valid[st_index][1] && (cache_tag[st_index][1] == st_tag);
+// wire st_way2_hit = cache_valid[st_index][2] && (cache_tag[st_index][2] == st_tag);
+// wire st_way3_hit = cache_valid[st_index][3] && (cache_tag[st_index][3] == st_tag);
+// wire st_cache_hit = st_way0_hit | st_way1_hit | st_way2_hit | st_way3_hit;
+
+// wire [1:0] st_hit_way = st_way0_hit ? 2'd0 :
+//                          st_way1_hit ? 2'd1 :
+//                          st_way2_hit ? 2'd2 : 2'd3;
+
+// // ============================================================
+// // Victim Way Selection (PLRU tree for latched index)
+// // ============================================================
+// wire [1:0] victim_way = {plru[lat_index][0],
+//                          plru[lat_index][0] ? plru[lat_index][2] : plru[lat_index][1]};
+
+// reg [1:0] victim_way_lat;  // latched at refill AR handshake
+
+// // ============================================================
+// // Refill Control
+// // ============================================================
+// reg [WORD_IDX_BITS-1:0] refill_cnt;   // word counter during burst
+// reg                     refill_rready;
+
+// // ============================================================
+// // Hit Response Registers
+// // ============================================================
+// reg        hit_resp_valid;
+// reg [DATA_WIDTH-1:0] hit_resp_data;
+// reg [3:0]  hit_resp_id;
+
+// // ============================================================
+// // Bypass Response (pass-through for uncached reads)
+// // ============================================================
+// reg bypass_ar_valid;
+
+// // ============================================================
+// // Main State Machine
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         state          <= ST_IDLE;
+//         lat_addr       <= {ADDR_WIDTH{1'b0}};
+//         lat_arid       <= 4'd0;
+//         lat_arsize     <= 3'd0;
+//         lat_cacheable  <= 1'b0;
+//         hit_resp_valid <= 1'b0;
+//         hit_resp_data  <= {DATA_WIDTH{1'b0}};
+//         hit_resp_id    <= 4'd0;
+//         bypass_ar_valid <= 1'b0;
+//         victim_way_lat <= 2'd0;
+//         refill_cnt     <= {WORD_IDX_BITS{1'b0}};
+//         refill_rready  <= 1'b0;
+//     end
+//     else begin
+//         // Default: clear single-cycle pulses
+//         if (hit_resp_valid && S_AXI_RREADY)
+//             hit_resp_valid <= 1'b0;
+
+//         case (state)
+//         // ─────────────────────────────────────────
+//         ST_IDLE: begin
+//             // Priority: handle stores first (pass-through), then loads
+//             if (S_AXI_AWVALID) begin
+//                 // Store: always pass through to AXI (write-through)
+//                 state <= ST_STORE_PASS;
+//             end
+//             else if (S_AXI_ARVALID) begin
+//                 // Latch the read request
+//                 lat_addr      <= S_AXI_ARADDR;
+//                 lat_arid      <= S_AXI_ARID;
+//                 lat_arsize    <= S_AXI_ARSIZE;
+//                 lat_cacheable <= is_cacheable(S_AXI_ARADDR);
+
+//                 if (is_cacheable(S_AXI_ARADDR)) begin
+//                     // Check hit using combinational req_* signals
+//                     // (they use S_AXI_ARADDR which is still valid this cycle)
+//                     // We need to use req_tag/req_index for fresh hit check
+//                     if ((cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag) ||
+//                         (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag) ||
+//                         (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag) ||
+//                         (cache_valid[req_index][3] && cache_tag[req_index][3] == req_tag)) begin
+//                         // Cache hit! Return data immediately
+//                         hit_resp_valid <= 1'b1;
+//                         hit_resp_id    <= S_AXI_ARID;
+//                         // Mux data from correct way
+//                         if (cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag)
+//                             hit_resp_data <= cache_data[req_index][0][req_offset[OFFSET_BITS-1:2]];
+//                         else if (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag)
+//                             hit_resp_data <= cache_data[req_index][1][req_offset[OFFSET_BITS-1:2]];
+//                         else if (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag)
+//                             hit_resp_data <= cache_data[req_index][2][req_offset[OFFSET_BITS-1:2]];
+//                         else
+//                             hit_resp_data <= cache_data[req_index][3][req_offset[OFFSET_BITS-1:2]];
+//                         state <= ST_IDLE; // stay in idle, response goes out this cycle
+//                     end
+//                     else begin
+//                         // Cache miss → start refill
+//                         state <= ST_REFILL_AR;
+//                     end
+//                 end
+//                 else begin
+//                     // Non-cacheable → bypass
+//                     bypass_ar_valid <= 1'b1;
+//                     state           <= ST_BYPASS_AR;
+//                 end
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_REFILL_AR: begin
+//             if (M_AXI_ARREADY) begin
+//                 victim_way_lat <= victim_way;  // latch victim
+//                 refill_cnt     <= {WORD_IDX_BITS{1'b0}};
+//                 refill_rready  <= 1'b0;
+//                 state          <= ST_REFILL_R;
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_REFILL_R: begin
+//             if (M_AXI_RVALID && ~refill_rready) begin
+//                 refill_rready <= 1'b1;
+//             end
+//             else if (refill_rready) begin
+//                 refill_rready <= 1'b0;
+//                 refill_cnt    <= refill_cnt + 1;
+//                 if (M_AXI_RLAST) begin
+//                     // Refill done → respond to LSU with the requested word
+//                     hit_resp_valid <= 1'b1;
+//                     hit_resp_id    <= lat_arid;
+//                     hit_resp_data  <= cache_data[lat_index][victim_way_lat][lat_offset[OFFSET_BITS-1:2]];
+//                     state          <= ST_IDLE;
+//                 end
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_BYPASS_AR: begin
+//             if (M_AXI_ARREADY) begin
+//                 bypass_ar_valid <= 1'b0;
+//                 state           <= ST_BYPASS_R;
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_BYPASS_R: begin
+//             // Pass RVALID/RREADY/RDATA directly between crossbar and LSU
+//             if (M_AXI_RVALID && M_AXI_RLAST && S_AXI_RREADY) begin
+//                 state <= ST_IDLE;
+//             end
+//         end
+
+//         // ─────────────────────────────────────────
+//         ST_STORE_PASS: begin
+//             // Pass AW/W/B channels directly between LSU and crossbar
+//             if (M_AXI_BVALID && S_AXI_BREADY) begin
+//                 state <= ST_IDLE;
+//             end
+//         end
+
+//         default: state <= ST_IDLE;
+//         endcase
+//     end
+// end
+
+// // ============================================================
+// // Cache Data Write (refill burst)
+// // ============================================================
+// integer di, dj, dw;
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         for (di = 0; di < SET_NUMS; di = di + 1)
+//             for (dj = 0; dj < WAY_NUMS; dj = dj + 1)
+//                 for (dw = 0; dw < WORDS_PER_BLOCK; dw = dw + 1)
+//                     cache_data[di][dj][dw] <= {DATA_WIDTH{1'b0}};
+//     end
+//     else if (state == ST_REFILL_R && M_AXI_RVALID && refill_rready) begin
+//         cache_data[lat_index][victim_way_lat][refill_cnt] <= M_AXI_RDATA;
+//     end
+//     else if (state == ST_STORE_PASS && S_AXI_WVALID && M_AXI_WREADY && st_cache_hit) begin
+//         // Write-through: update cache on store hit (byte-level merge)
+//         if (S_AXI_WSTRB[0]) cache_data[st_index][st_hit_way][st_offset[OFFSET_BITS-1:2]][ 7: 0] <= S_AXI_WDATA[ 7: 0];
+//         if (S_AXI_WSTRB[1]) cache_data[st_index][st_hit_way][st_offset[OFFSET_BITS-1:2]][15: 8] <= S_AXI_WDATA[15: 8];
+//         if (S_AXI_WSTRB[2]) cache_data[st_index][st_hit_way][st_offset[OFFSET_BITS-1:2]][23:16] <= S_AXI_WDATA[23:16];
+//         if (S_AXI_WSTRB[3]) cache_data[st_index][st_hit_way][st_offset[OFFSET_BITS-1:2]][31:24] <= S_AXI_WDATA[31:24];
+//     end
+// end
+
+// // ============================================================
+// // Cache Tag & Valid Control
+// // ============================================================
+// integer si, wi;
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync) begin
+//         for (si = 0; si < SET_NUMS; si = si + 1)
+//             for (wi = 0; wi < WAY_NUMS; wi = wi + 1)
+//                 cache_valid[si][wi] <= 1'b0;
+//     end
+//     else if (state == ST_REFILL_AR && M_AXI_ARREADY) begin
+//         cache_tag[lat_index][victim_way]   <= lat_tag;
+//         cache_valid[lat_index][victim_way] <= 1'b0;
+//         `ifdef DCACHE_DEBUG
+//         $display("[DCACHE] MISS  : set=%0d way=%0d tag=0x%0h addr=0x%0h",
+//                  lat_index, victim_way, lat_tag, lat_addr);
+//         `endif
+//     end
+//     else if (state == ST_REFILL_R && M_AXI_RVALID && refill_rready && M_AXI_RLAST) begin
+//         cache_valid[lat_index][victim_way_lat] <= 1'b1;
+//         `ifdef DCACHE_DEBUG
+//         $display("[DCACHE] FILL OK: set=%0d way=%0d tag=0x%0h",
+//                  lat_index, victim_way_lat, lat_tag);
+//         `endif
+//     end
+// end
+
+// // ============================================================
+// // PLRU Update Logic (same tree as ICache)
+// // ============================================================
+// always @(posedge clock or negedge rst_n_sync) begin
+//     integer s;
+//     if (~rst_n_sync) begin
+//         for (s = 0; s < SET_NUMS; s = s + 1)
+//             plru[s] <= {PLRU_BITS{1'b0}};
+//     end
+//     else if (state == ST_REFILL_R && M_AXI_RVALID && refill_rready && M_AXI_RLAST) begin
+//         // After refill: point away from filled way
+//         case (victim_way_lat)
+//             2'd0: plru[lat_index] <= {plru[lat_index][2], 1'b1, 1'b1};
+//             2'd1: plru[lat_index] <= {plru[lat_index][2], 1'b0, 1'b1};
+//             2'd2: plru[lat_index] <= {1'b1, plru[lat_index][1], 1'b0};
+//             2'd3: plru[lat_index] <= {1'b0, plru[lat_index][1], 1'b0};
+//         endcase
+//     end
+//     else if (state == ST_IDLE && S_AXI_ARVALID && is_cacheable(S_AXI_ARADDR)) begin
+//         // On cacheable load hit: point away from hit way
+//         if ((cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag) ||
+//             (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag) ||
+//             (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag) ||
+//             (cache_valid[req_index][3] && cache_tag[req_index][3] == req_tag)) begin
+//             // Determine which way and update PLRU
+//             if      (cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag)
+//                 plru[req_index] <= {plru[req_index][2], 1'b1, 1'b1};
+//             else if (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag)
+//                 plru[req_index] <= {plru[req_index][2], 1'b0, 1'b1};
+//             else if (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag)
+//                 plru[req_index] <= {1'b1, plru[req_index][1], 1'b0};
+//             else
+//                 plru[req_index] <= {1'b0, plru[req_index][1], 1'b0};
+//         end
+//     end
+// end
+
+// // ============================================================
+// // AXI Read Address Channel (DCache → Crossbar)
+// // ============================================================
+// // In refill mode: send burst read; in bypass mode: forward LSU request
+// assign M_AXI_ARADDR  = (state == ST_REFILL_AR) ? {lat_addr[ADDR_WIDTH-1:OFFSET_BITS], {OFFSET_BITS{1'b0}}} :
+//                         (state == ST_BYPASS_AR) ? lat_addr :
+//                         {ADDR_WIDTH{1'b0}};
+
+// assign M_AXI_ARVALID = (state == ST_REFILL_AR) || (state == ST_BYPASS_AR && bypass_ar_valid);
+
+// assign M_AXI_ARLEN   = (state == ST_REFILL_AR) ? ARLEN_REFILL[7:0] : 8'd0;
+
+// assign M_AXI_ARSIZE  = (state == ST_REFILL_AR) ? 3'b010 :  // always 4 bytes for refill
+//                         lat_arsize;                          // original size for bypass
+
+// assign M_AXI_ARBURST = (state == ST_REFILL_AR) ? 2'b01 :   // INCR for refill
+//                         2'b00;                               // FIXED for single beat
+
+// assign M_AXI_ARID    = lat_arid;
+
+// // ============================================================
+// // AXI Read Data Channel (Crossbar → DCache → LSU)
+// // ============================================================
+// assign M_AXI_RREADY  = (state == ST_REFILL_R)  ? refill_rready :
+//                         (state == ST_BYPASS_R)  ? S_AXI_RREADY :
+//                         1'b0;
+
+// // Read data to LSU
+// assign S_AXI_RDATA   = (state == ST_BYPASS_R)  ? M_AXI_RDATA :
+//                         hit_resp_data;
+
+// assign S_AXI_RVALID  = (state == ST_BYPASS_R)  ? M_AXI_RVALID :
+//                         hit_resp_valid;
+
+// assign S_AXI_RLAST   = (state == ST_BYPASS_R)  ? M_AXI_RLAST :
+//                         hit_resp_valid;  // single beat response
+
+// assign S_AXI_RRESP   = (state == ST_BYPASS_R)  ? M_AXI_RRESP : 2'b00;
+// assign S_AXI_RID     = (state == ST_BYPASS_R)  ? M_AXI_RID : hit_resp_id;
+
+// // ============================================================
+// // AXI Read Address: LSU → DCache acceptance
+// // ============================================================
+// // Accept read request when idle (whether hit or miss, we latch it)
+// assign S_AXI_ARREADY = (state == ST_IDLE) && !S_AXI_AWVALID;
+
+// // ============================================================
+// // AXI Write Channels: Pass-Through (store always goes to memory)
+// // ============================================================
+// // AW channel
+// assign M_AXI_AWADDR  = S_AXI_AWADDR;
+// assign M_AXI_AWVALID = (state == ST_STORE_PASS || state == ST_IDLE) ? S_AXI_AWVALID : 1'b0;
+// assign M_AXI_AWLEN   = S_AXI_AWLEN;
+// assign M_AXI_AWSIZE  = S_AXI_AWSIZE;
+// assign M_AXI_AWBURST = S_AXI_AWBURST;
+// assign M_AXI_AWID    = S_AXI_AWID;
+
+// assign S_AXI_AWREADY = (state == ST_STORE_PASS || state == ST_IDLE) ? M_AXI_AWREADY : 1'b0;
+
+// // W channel
+// assign M_AXI_WVALID  = (state == ST_STORE_PASS) ? S_AXI_WVALID : 1'b0;
+// assign M_AXI_WDATA   = S_AXI_WDATA;
+// assign M_AXI_WSTRB   = S_AXI_WSTRB;
+// assign M_AXI_WLAST   = S_AXI_WLAST;
+
+// assign S_AXI_WREADY  = (state == ST_STORE_PASS) ? M_AXI_WREADY : 1'b0;
+
+// // B channel
+// assign M_AXI_BREADY  = (state == ST_STORE_PASS) ? S_AXI_BREADY : 1'b0;
+
+// assign S_AXI_BVALID  = (state == ST_STORE_PASS) ? M_AXI_BVALID : 1'b0;
+// assign S_AXI_BRESP   = M_AXI_BRESP;
+// assign S_AXI_BID     = M_AXI_BID;
+
+// // ============================================================
+// // Debug - Deadlock detection (guarded by DCACHE_DEBUG)
+// // ============================================================
+// `ifdef DCACHE_DEBUG
+// reg [15:0] dbg_stall_cnt;
+// always @(posedge clock or negedge rst_n_sync) begin
+//     if (~rst_n_sync)
+//         dbg_stall_cnt <= 0;
+//     else if (state != ST_IDLE) begin
+//         dbg_stall_cnt <= dbg_stall_cnt + 1;
+//         if (dbg_stall_cnt == 16'd29999) begin
+//             $display("[DCACHE] !! STALL: stuck in state %0d for 10000 cycles, addr=0x%0h",
+//                      state, lat_addr);
+//             $finish;
+//         end
+//     end
+//     else
+//         dbg_stall_cnt <= 0;
+// end
+
+// always @(posedge clock) begin
+//     if (state == ST_IDLE && S_AXI_ARVALID && is_cacheable(S_AXI_ARADDR)) begin
+//         if ((cache_valid[req_index][0] && cache_tag[req_index][0] == req_tag) ||
+//             (cache_valid[req_index][1] && cache_tag[req_index][1] == req_tag) ||
+//             (cache_valid[req_index][2] && cache_tag[req_index][2] == req_tag) ||
+//             (cache_valid[req_index][3] && cache_tag[req_index][3] == req_tag))
+//             $display("[DCACHE] HIT   : addr=0x%0h", S_AXI_ARADDR);
+//     end
+// end
+// `endif
+
+// endmodule
 module ysyx_23060124_EXU(
     input                               clock                      ,
     input                               reset                      ,
@@ -313,15 +878,14 @@ parameter BGEU  = 3'b111;
 
 wire                   [  31:0]         alu_res, load_res          ;
 wire                                    if_lsu                     ;
+wire                                    lsu_done                   ;
 
 reg post_valid;
 
 assign if_lsu = i_load || i_store;
-assign o_post_valid =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
-                       post_valid;
+assign o_post_valid =  if_lsu  ?  lsu_done : post_valid;
 
-assign o_pre_ready  =  if_lsu  ?  (M_AXI_RLAST && M_AXI_RREADY)||(M_AXI_BREADY) : 
-                       1'b1;
+assign o_pre_ready  =  if_lsu  ?  lsu_done : 1'b1;
 
 always @(posedge clock or posedge reset) begin
     if(reset) begin
@@ -430,7 +994,8 @@ ysyx_23060124_LSU exu_lsu(
     .M_AXI_BREADY                      (M_AXI_BREADY              ),
     .M_AXI_BID                         (M_AXI_BID                 ),
   //handshake
-    .o_pre_ready                       (o_pre_ready               )
+    .o_pre_ready                       (o_pre_ready               ),
+    .lsu_done                          (lsu_done                  )
 );
 
 wire beq, bne;
@@ -541,19 +1106,25 @@ always @(posedge clock or posedge reset) begin
     end
 end
 endmodule   
-module ysyx_23060124_LSU
-(
+module ysyx_23060124_LSU #(
+    parameter ADDR_WIDTH      = 32,
+    parameter DATA_WIDTH      = 32,
+    parameter SET_NUMS        = 4,
+    parameter WAY_NUMS        = 4,
+    parameter WORDS_PER_BLOCK = 4,
+    parameter CACHE_START     = 32'ha0000000,
+    parameter CACHE_END       = 32'hc0000000
+)(
     input                               clock                      ,
-    input                               reset                     ,
+    input                               reset                      ,
     input              [  31:0]         store_src                  ,
     input              [  31:0]         alu_res                    ,
     input              [   2:0]         exu_opt                    ,
     output reg         [  31:0]         load_res                   ,
-    //
     input                               i_load                     ,
     input                               i_store                    ,
-    //axi interface
-    //write address channel  
+
+    // AXI Write Address Channel
     output             [  31:0]         M_AXI_AWADDR               ,
     output                              M_AXI_AWVALID              ,
     input                               M_AXI_AWREADY              ,
@@ -562,14 +1133,14 @@ module ysyx_23060124_LSU
     output             [   1:0]         M_AXI_AWBURST              ,
     output             [   3:0]         M_AXI_AWID                 ,
 
-    //write data channel
+    // AXI Write Data Channel
     output                              M_AXI_WVALID               ,
     input                               M_AXI_WREADY               ,
     output             [  31:0]         M_AXI_WDATA                ,
     output             [   3:0]         M_AXI_WSTRB                ,
     output                              M_AXI_WLAST                ,
 
-    //read data channel
+    // AXI Read Data Channel
     input              [  31:0]         M_AXI_RDATA                ,
     input              [   1:0]         M_AXI_RRESP                ,
     input                               M_AXI_RVALID               ,
@@ -577,7 +1148,7 @@ module ysyx_23060124_LSU
     input              [   3:0]         M_AXI_RID                  ,
     input                               M_AXI_RLAST                ,
 
-    //read adress channel
+    // AXI Read Address Channel
     output             [  31:0]         M_AXI_ARADDR               ,
     output                              M_AXI_ARVALID              ,
     input                               M_AXI_ARREADY              ,
@@ -586,233 +1157,466 @@ module ysyx_23060124_LSU
     output             [   2:0]         M_AXI_ARSIZE               ,
     output             [   1:0]         M_AXI_ARBURST              ,
 
-    //write back channel
+    // AXI Write Response Channel
     input              [   1:0]         M_AXI_BRESP                ,
     input                               M_AXI_BVALID               ,
     output                              M_AXI_BREADY               ,
     input              [   3:0]         M_AXI_BID                  ,
-  //lsu -> wbu handshake
-    input                               o_pre_ready                
+
+    // Pipeline handshake
+    input                               o_pre_ready                ,
+    output                              lsu_done
 );
-/************parameter************/
-//exu_opt
-parameter LB  = 3'b000;
-parameter LH  = 3'b001;
-parameter LW  = 3'b010;
-parameter LBU = 3'b100;
-parameter LHU = 3'b101;
 
-parameter SB = 3'b000;
-parameter SH = 3'b001;
-parameter SW = 3'b010;
- 
-wire                   [   3:0]         wstrb                      ;
-// Initiate AXI transactions
-wire                                    INIT_AXI_TXN               ;
-// AXI4LITE signals
-reg                                     axi_awvalid                ;
-reg                                     axi_wvalid                 ;
-reg                                     axi_arvalid                ;
-reg                                     axi_rready                 ;
-reg                                     axi_bready                 ;
-//combine awaddr araddr to 1
-reg                    [  31:0]         axi_axaddr                 ;
+// `define DCACHE_DEBUG 1
 
-reg                                     init_txn_ff                ;
-reg                                     init_txn_ff2               ;
-reg                                     o_pre_ready_d1             ;
+// ============================================================
+// Load/Store Opcodes
+// ============================================================
+parameter LB  = 3'b000, LH  = 3'b001, LW = 3'b010;
+parameter LBU = 3'b100, LHU = 3'b101;
+parameter SB  = 3'b000, SH  = 3'b001, SW = 3'b010;
 
-wire                                    init_txn_pulse             ;
-wire                                    is_ls                      ;
-wire                   [   4:0]         shift8                     ;
-reg                    [   1:0]         shift                      ;
+// ============================================================
+// Cache Derived Parameters
+// ============================================================
+localparam BLOCK_SIZE     = 4 * WORDS_PER_BLOCK;
+localparam WORD_IDX_BITS  = $clog2(WORDS_PER_BLOCK);
+localparam INDEX_BITS     = $clog2(SET_NUMS);
+localparam OFFSET_BITS    = $clog2(BLOCK_SIZE);
+localparam TAG_BITS       = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS;
+localparam PLRU_BITS      = WAY_NUMS - 1;
+localparam REFILL_ARLEN   = WORDS_PER_BLOCK - 1;
 
-wire txn_pulse_load;
-wire txn_pulse_store;
+// ============================================================
+// Cache Storage
+// ============================================================
+reg [DATA_WIDTH-1:0] cache_data  [SET_NUMS-1:0][WAY_NUMS-1:0][WORDS_PER_BLOCK-1:0];
+reg [TAG_BITS-1:0]   cache_tag   [SET_NUMS-1:0][WAY_NUMS-1:0];
+reg                  cache_valid [SET_NUMS-1:0][WAY_NUMS-1:0];
+reg [PLRU_BITS-1:0]  plru        [SET_NUMS-1:0];
 
-assign shift8 = {shift, 3'b0};
-assign M_AXI_AWADDR = axi_axaddr;
-assign M_AXI_WDATA  = store_src << shift8;
+// ============================================================
+// State Machine
+// ============================================================
+localparam S_IDLE       = 4'd0;
+localparam S_CHECK      = 4'd1;   // 1-cycle: latch addr, check cache
+localparam S_CACHE_HIT  = 4'd2;   // 1-cycle: return cached data
+localparam S_REFILL_AR  = 4'd3;   // wait AR handshake (burst)
+localparam S_REFILL_R   = 4'd4;   // receive burst data
+localparam S_UNCACHE_AR = 4'd5;   // wait AR handshake (single)
+localparam S_UNCACHE_R  = 4'd6;   // receive single-beat data
+localparam S_STORE      = 4'd7;   // AW + W handshake
+localparam S_STORE_B    = 4'd8;   // wait B response
 
-assign M_AXI_AWVALID	= axi_awvalid;
-assign M_AXI_AWLEN = 'b0;
-assign M_AXI_AWSIZE =   (exu_opt == SW) ? 3'b010 :
-                        (exu_opt == SH) ? 3'b001 :
-                        (exu_opt == SB) ? 3'b000 : 3'b010;
-assign M_AXI_AWID    = 0;
+reg [3:0] state;
+
+// ============================================================
+// Trigger Mechanism (preserved from original LSU)
+// ============================================================
+reg                    init_txn_ff, init_txn_ff2, o_pre_ready_d1;
+wire                   is_ls           = i_load || i_store;
+wire                   INIT_AXI_TXN   = reset ? 1'b0 : (o_pre_ready_d1 && is_ls);
+wire                   init_txn_pulse = ~init_txn_ff2 & init_txn_ff;
+wire                   txn_pulse_load  = i_load  && init_txn_pulse;
+wire                   txn_pulse_store = i_store && init_txn_pulse;
+
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        init_txn_ff    <= 1'b0;
+        init_txn_ff2   <= 1'b0;
+        o_pre_ready_d1 <= 1'b0;
+    end else begin
+        o_pre_ready_d1 <= o_pre_ready;
+        init_txn_ff    <= INIT_AXI_TXN;
+        init_txn_ff2   <= init_txn_ff;
+    end
+end
+
+// ============================================================
+// Latched Request (stable for entire operation)
+// ============================================================
+reg [31:0] lat_addr;
+reg [1:0]  lat_shift;
+reg [2:0]  lat_exu_opt;
+reg [31:0] lat_store_src;
+reg        lat_is_load;
+reg        lat_cacheable;
+
+wire [4:0] lat_shift8 = {lat_shift, 3'b0};
+
+// ============================================================
+// Address Decomposition (from latched address)
+// ============================================================
+wire [TAG_BITS-1:0]      addr_tag   = lat_addr[ADDR_WIDTH-1 : INDEX_BITS+OFFSET_BITS];
+wire [INDEX_BITS-1:0]    addr_index = lat_addr[INDEX_BITS+OFFSET_BITS-1 : OFFSET_BITS];
+wire [WORD_IDX_BITS-1:0] addr_word  = lat_addr[OFFSET_BITS-1 : 2];
+
+// ============================================================
+// Cache Hit Detection (combinational, from latched addr)
+// ============================================================
+wire w0_hit = cache_valid[addr_index][0] && (cache_tag[addr_index][0] == addr_tag);
+wire w1_hit = cache_valid[addr_index][1] && (cache_tag[addr_index][1] == addr_tag);
+wire w2_hit = cache_valid[addr_index][2] && (cache_tag[addr_index][2] == addr_tag);
+wire w3_hit = cache_valid[addr_index][3] && (cache_tag[addr_index][3] == addr_tag);
+wire cache_hit = w0_hit | w1_hit | w2_hit | w3_hit;
+
+wire [1:0] hit_way = w0_hit ? 2'd0 : w1_hit ? 2'd1 : w2_hit ? 2'd2 : 2'd3;
+
+wire [31:0] hit_word = w0_hit ? cache_data[addr_index][0][addr_word] :
+                       w1_hit ? cache_data[addr_index][1][addr_word] :
+                       w2_hit ? cache_data[addr_index][2][addr_word] :
+                                cache_data[addr_index][3][addr_word] ;
+
+// ============================================================
+// PLRU Victim Selection
+// ============================================================
+wire [1:0] victim_way = {plru[addr_index][0],
+                         plru[addr_index][0] ? plru[addr_index][2] : plru[addr_index][1]};
+reg [1:0] victim_way_lat;
+
+// ============================================================
+// Refill Control
+// ============================================================
+reg [WORD_IDX_BITS-1:0] refill_cnt;
+reg                     refill_rready;
+
+// ============================================================
+// Store Byte Strobe & Shifted Data
+// ============================================================
+wire [3:0] wstrb_base = (lat_exu_opt == SB) ? 4'b0001 :
+                       (lat_exu_opt == SH) ? 4'b0011 :
+                       (lat_exu_opt == SW) ? 4'b1111 : 4'b0000;
+wire [3:0] wstrb_shifted = wstrb_base << lat_shift;
+wire [31:0] wdata_shifted = lat_store_src << lat_shift8;
+
+// ============================================================
+// AXI Control Registers
+// ============================================================
+reg axi_arvalid, axi_awvalid, axi_wvalid, axi_bready, axi_rready;
+
+// ============================================================
+// Done Signal
+// ============================================================
+reg done_reg;
+assign lsu_done = done_reg;
+
+// ============================================================
+// AXI Output Assignments
+// ============================================================
+// AR channel
+assign M_AXI_ARADDR  = (state == S_REFILL_AR) ? {lat_addr[31:OFFSET_BITS], {OFFSET_BITS{1'b0}}} :
+                        lat_addr;  // uncached: full addr
+assign M_AXI_ARVALID = axi_arvalid;
+assign M_AXI_ARLEN   = (state == S_REFILL_AR) ? REFILL_ARLEN[7:0] : 8'd0;
+assign M_AXI_ARSIZE  = (state == S_REFILL_AR) ? 3'b010 :
+                        (lat_exu_opt[1:0] == 2'b10) ? 3'b010 :
+                        (lat_exu_opt[1:0] == 2'b01) ? 3'b001 : 3'b000;
+assign M_AXI_ARBURST = (state == S_REFILL_AR) ? 2'b01 : 2'b00;
+assign M_AXI_ARID    = 4'd0;
+
+// AW channel
+assign M_AXI_AWADDR  = lat_addr;
+assign M_AXI_AWVALID = axi_awvalid;
+assign M_AXI_AWLEN   = 8'd0;
+assign M_AXI_AWSIZE  = (lat_exu_opt == SW) ? 3'b010 :
+                       (lat_exu_opt == SH) ? 3'b001 : 3'b000;
 assign M_AXI_AWBURST = 2'b00;
-//Write Data(W)
-assign M_AXI_WVALID	= axi_wvalid;
-//Set all byte strobes in this example
-assign wstrb =  (exu_opt == SB) ? 4'b0001 :
-                (exu_opt == SH) ? 4'b0011 :
-                (exu_opt == SW) ? 4'b1111 : 4'b0000;
+assign M_AXI_AWID    = 4'd0;
 
-assign M_AXI_WSTRB = wstrb << shift;
-assign M_AXI_WLAST = 1'b1;
+// W channel
+assign M_AXI_WVALID  = axi_wvalid;
+assign M_AXI_WDATA   = wdata_shifted;
+assign M_AXI_WSTRB   = wstrb_shifted;
+assign M_AXI_WLAST   = 1'b1;
 
-//Write Response (B)
-assign M_AXI_BREADY	= axi_bready;
-//Read Address (AR)
-assign M_AXI_ARADDR = axi_axaddr;
-assign M_AXI_ARVALID	= axi_arvalid;
-assign M_AXI_ARLEN = 'b0;
-assign M_AXI_ARSIZE =   (exu_opt[1:0] == 2'b10) ? 3'b010 :
-                        (exu_opt[1:0] == 2'b01) ? 3'b001 :
-                        (exu_opt[1:0] == 2'b00) ? 3'b000 : 3'b010;
-                        
-assign M_AXI_ARBURST = 2'b00;
-assign M_AXI_ARID = 0;
+// R channel
+assign M_AXI_RREADY  = (state == S_REFILL_R) ? refill_rready : axi_rready;
 
-//Read and Read Response (R)
-assign M_AXI_RREADY	= axi_rready;
-//Example design I/O
-assign init_txn_pulse	= reset ? 1'b0 : (!init_txn_ff2) && init_txn_ff;
-assign INIT_AXI_TXN   = reset ? 1'b0 : (o_pre_ready_d1 && is_ls ? 1'b1 : 1'b0);
-assign is_ls = i_load  || i_store;
-assign txn_pulse_load   = i_load  && init_txn_pulse;
-assign txn_pulse_store  = i_store && init_txn_pulse;  
+// B channel
+assign M_AXI_BREADY  = axi_bready;
 
-always @(posedge clock or posedge reset)begin
-    if(reset)begin
-      o_pre_ready_d1 <= 1'b0; 
+// ============================================================
+// Main State Machine
+// ============================================================
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        state          <= S_IDLE;
+        lat_addr       <= 32'd0;
+        lat_shift      <= 2'd0;
+        lat_exu_opt    <= 3'd0;
+        lat_store_src  <= 32'd0;
+        lat_is_load    <= 1'b0;
+        lat_cacheable  <= 1'b0;
+        done_reg       <= 1'b0;
+        axi_arvalid    <= 1'b0;
+        axi_awvalid    <= 1'b0;
+        axi_wvalid     <= 1'b0;
+        axi_bready     <= 1'b0;
+        axi_rready     <= 1'b0;
+        victim_way_lat <= 2'd0;
+        refill_cnt     <= {WORD_IDX_BITS{1'b0}};
+        refill_rready  <= 1'b0;
     end
     else begin
-      o_pre_ready_d1 <= o_pre_ready;
+        done_reg <= 1'b0;  // default: clear done pulse
+
+        case (state)
+        // ─────────────────────────────────────────
+        S_IDLE: begin
+            if (txn_pulse_load || txn_pulse_store) begin
+                // Latch request
+                lat_addr      <= alu_res;
+                lat_shift     <= alu_res[1:0];
+                lat_exu_opt   <= exu_opt;
+                lat_store_src <= store_src;
+                lat_is_load   <= i_load;
+                lat_cacheable <= (alu_res >= CACHE_START && alu_res < CACHE_END);
+                state         <= S_CHECK;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_CHECK: begin
+            // Address latched last cycle, hit detection is now valid
+            if (lat_is_load) begin
+                if (lat_cacheable && cache_hit) begin
+                    state <= S_CACHE_HIT;
+                    `ifdef DCACHE_DEBUG
+                    $display("[DCACHE] LOAD HIT : set=%0d way=%0d addr=0x%0h", addr_index, hit_way, lat_addr);
+                    `endif
+                end
+                else if (lat_cacheable) begin
+                    // Miss → burst refill
+                    axi_arvalid <= 1'b1;
+                    state       <= S_REFILL_AR;
+                    `ifdef DCACHE_DEBUG
+                    $display("[DCACHE] LOAD MISS: set=%0d victim=%0d addr=0x%0h", addr_index, victim_way, lat_addr);
+                    `endif
+                end
+                else begin
+                    // Uncacheable → single-beat AXI read
+                    axi_arvalid <= 1'b1;
+                    state       <= S_UNCACHE_AR;
+                end
+            end
+            else begin
+                // Store: always write-through to AXI
+                axi_awvalid <= 1'b1;
+                axi_wvalid  <= 1'b1;
+                state       <= S_STORE;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_CACHE_HIT: begin
+            done_reg <= 1'b1;
+            state    <= S_IDLE;
+        end
+
+        // ─────────────────────────────────────────
+        S_REFILL_AR: begin
+            if (M_AXI_ARREADY && axi_arvalid) begin
+                axi_arvalid    <= 1'b0;
+                victim_way_lat <= victim_way;
+                refill_cnt     <= {WORD_IDX_BITS{1'b0}};
+                refill_rready  <= 1'b0;
+                state          <= S_REFILL_R;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_REFILL_R: begin
+            if (M_AXI_RVALID && ~refill_rready) begin
+                refill_rready <= 1'b1;
+            end
+            else if (refill_rready) begin
+                refill_rready <= 1'b0;
+                refill_cnt    <= refill_cnt + 1;
+                if (M_AXI_RLAST) begin
+                    done_reg <= 1'b1;
+                    state    <= S_IDLE;
+                end
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_UNCACHE_AR: begin
+            if (M_AXI_ARREADY && axi_arvalid) begin
+                axi_arvalid <= 1'b0;
+                axi_rready  <= 1'b0;
+                state       <= S_UNCACHE_R;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_UNCACHE_R: begin
+            if (M_AXI_RVALID && ~axi_rready) begin
+                axi_rready <= 1'b1;
+            end
+            else if (axi_rready) begin
+                axi_rready <= 1'b0;
+                done_reg   <= 1'b1;
+                state      <= S_IDLE;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_STORE: begin
+            if (M_AXI_AWREADY && axi_awvalid)
+                axi_awvalid <= 1'b0;
+            if (M_AXI_WREADY && axi_wvalid)
+                axi_wvalid <= 1'b0;
+            // Both handshakes done → wait for B
+            if (!axi_awvalid && !axi_wvalid) begin
+                state <= S_STORE_B;
+            end
+            // Handle case where one completes this cycle
+            if ((M_AXI_AWREADY || !axi_awvalid) && (M_AXI_WREADY || !axi_wvalid)) begin
+                state <= S_STORE_B;
+            end
+        end
+
+        // ─────────────────────────────────────────
+        S_STORE_B: begin
+            if (M_AXI_BVALID && ~axi_bready) begin
+                axi_bready <= 1'b1;
+            end
+            else if (axi_bready) begin
+                axi_bready <= 1'b0;
+                done_reg   <= 1'b1;
+                state      <= S_IDLE;
+            end
+        end
+
+        default: state <= S_IDLE;
+        endcase
     end
 end
 
-always @(posedge clock or posedge reset)										      
-    begin                                                                        
-    if (reset)                                                   
-        begin                                                                    
-        init_txn_ff <= 1'b0;                                                   
-        init_txn_ff2 <= 1'b0;     
-        shift <= 2'b00;                                              
-        end                                                                               
-    else                                                                       
-        begin  
-        init_txn_ff <= INIT_AXI_TXN;
-        init_txn_ff2 <= init_txn_ff;
-        axi_axaddr <= alu_res;
-        shift <= alu_res[1:0];  
-        end                                                                      
-    end     
 
-  // always @(posedge clock or posedge reset)										      
-  //   begin                                                                        
-  //   if (reset)                                                   
-  //       begin                                                                    
-  //         idle <= 1'b1;
-  //       end                                                                               
-  //   else if((i_store || i_load) && idle) begin
-  //     idle <= 1'b0;
-  //   end            
-  //   else if((M_AXI_RLAST && M_AXI_RREADY) || M_AXI_BREADY) begin
-  //     idle <= 1'b1;
-  //   end          
-  //   else idle <= idle;                                                
-  //   end     
-
-	  always @(posedge clock or posedge reset)										      
-	  begin                                                                         
-	    if (reset)                                                   
-	      begin                                                                    
-	        axi_awvalid <= 1'b0;                                                   
-	      end                                                                      
-	    else                                                                       
-	      begin                                                                    
-	        if (txn_pulse_store)                                                
-	          begin                                                                
-	            axi_awvalid <= 1'b1;
-	          end                                                                  
-	        else if (M_AXI_AWREADY && axi_awvalid)                                 
-	          begin                                                                
-	            axi_awvalid <= 1'b0;                                               
-	          end                                                                  
-	      end                                                                      
-	  end      
-
-	   always @(posedge clock or posedge reset)                                        
-	   begin                                                                         
-	     if (reset)                                                    
-	       begin                                                                     
-	         axi_wvalid <= 1'b0;       
-	       end                                                                       
-	     else if (txn_pulse_store)                                                
-	       begin                                                                     
-	         axi_wvalid <= 1'b1;       
-	       end                                                                       
-	     else if (M_AXI_WREADY && axi_wvalid)                                        
-	       begin                                                                     
-	        axi_wvalid <= 1'b0;         
-	       end                                                                       
-	   end                                                                           
-
-	  always @(posedge clock or posedge reset)                                    
-	  begin                                                                
-	    if (reset)                                           
-	      begin                                                            
-	        axi_bready <= 1'b0;                                            
-	      end                                                                                   
-	    else if (M_AXI_BVALID && ~axi_bready)                              
-	      begin                                                            
-	        axi_bready <= 1'b1;                                            
-	      end                                                              
-	    // deassert after one clock cycle                                  
-	    else if (axi_bready)                                               
-	      begin                                                            
-	        axi_bready <= 1'b0;                                            
-	      end                                                              
-	    else                                                               
-	      axi_bready <= axi_bready;                                        
-	  end                                                                  
-	                                                                                                                                  
-    always @(posedge clock or posedge reset)                                                     
-    begin                                                                            
-    if (reset)                                                   
-        begin                                                                        
-        axi_arvalid <= 1'b0;                                                       
-        end                                                                          
-    else if (txn_pulse_load)                                                    
-        begin                                                                        
-        axi_arvalid <= 1'b1;  
-        end                                                                          
-    else if (axi_arvalid && M_AXI_ARREADY)                                         
-        begin                                                                        
-        axi_arvalid <= 1'b0;                                                       
-        end                                                                          
-    end                                                                              
-                     
-    always @(posedge clock or posedge reset)                                    
-    begin                                                                 
-    if (reset)                                                                                    
-        begin                                                             
-        axi_rready <= 1'b0;                                             
-        end                                                                                        
-    else if (M_AXI_RVALID && ~axi_rready)                               
-        begin                                                             
-        axi_rready <= 1'b1;                                             
-        end                                                               
-    else if (axi_rready)                                                
-        begin                                                             
-        axi_rready <= 1'b0;                                             
-        end                                                               
-    end 
-                                
-wire                   [  31:0]         axi_rdata                  ;
-assign axi_rdata = M_AXI_RDATA >> shift8;
-
-always @(*) begin
-  case(exu_opt)
-    LB  : load_res = {{24{axi_rdata[7]}}, axi_rdata[7:0]};
-    LH  : load_res = {{16{axi_rdata[15]}}, axi_rdata[15:0]};
-    LW  : load_res = axi_rdata[31:0];
-    LBU : load_res = {24'b0, axi_rdata[7:0]};
-    LHU : load_res = {{16'b0}, axi_rdata[15:0]};
-    default: load_res = 32'b0;
-  endcase
+// ============================================================
+// Cache Data Write (refill + store write-through update)
+// ============================================================
+integer di, dj, dw;
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        for (di = 0; di < SET_NUMS; di = di + 1)
+            for (dj = 0; dj < WAY_NUMS; dj = dj + 1)
+                for (dw = 0; dw < WORDS_PER_BLOCK; dw = dw + 1)
+                    cache_data[di][dj][dw] <= {DATA_WIDTH{1'b0}};
+    end
+    else if (state == S_REFILL_R && M_AXI_RVALID && refill_rready) begin
+        cache_data[addr_index][victim_way_lat][refill_cnt] <= M_AXI_RDATA;
+    end
+    else if (state == S_STORE && lat_cacheable && cache_hit) begin
+        // Write-through: update cache on store hit (byte-level merge)
+        if (wstrb_shifted[0]) cache_data[addr_index][hit_way][addr_word][ 7: 0] <= wdata_shifted[ 7: 0];
+        if (wstrb_shifted[1]) cache_data[addr_index][hit_way][addr_word][15: 8] <= wdata_shifted[15: 8];
+        if (wstrb_shifted[2]) cache_data[addr_index][hit_way][addr_word][23:16] <= wdata_shifted[23:16];
+        if (wstrb_shifted[3]) cache_data[addr_index][hit_way][addr_word][31:24] <= wdata_shifted[31:24];
+    end
 end
+
+// ============================================================
+// Cache Tag & Valid Control
+// ============================================================
+integer si, wi;
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        for (si = 0; si < SET_NUMS; si = si + 1)
+            for (wi = 0; wi < WAY_NUMS; wi = wi + 1)
+                cache_valid[si][wi] <= 1'b0;
+    end
+    else if (state == S_REFILL_AR && M_AXI_ARREADY && axi_arvalid) begin
+        // AR handshake: write tag, invalidate during fill
+        cache_tag[addr_index][victim_way]   <= addr_tag;
+        cache_valid[addr_index][victim_way] <= 1'b0;
+    end
+    else if (state == S_REFILL_R && M_AXI_RVALID && refill_rready && M_AXI_RLAST) begin
+        // Refill done: validate line
+        cache_valid[addr_index][victim_way_lat] <= 1'b1;
+        `ifdef DCACHE_DEBUG
+        $display("[DCACHE] FILL OK : set=%0d way=%0d tag=0x%0h", addr_index, victim_way_lat, addr_tag);
+        `endif
+    end
+end
+
+// ============================================================
+// PLRU Update
+// ============================================================
+always @(posedge clock or posedge reset) begin
+    integer s;
+    if (reset) begin
+        for (s = 0; s < SET_NUMS; s = s + 1)
+            plru[s] <= {PLRU_BITS{1'b0}};
+    end
+    else if (state == S_REFILL_R && M_AXI_RVALID && refill_rready && M_AXI_RLAST) begin
+        case (victim_way_lat)
+            2'd0: plru[addr_index] <= {plru[addr_index][2], 1'b1, 1'b1};
+            2'd1: plru[addr_index] <= {plru[addr_index][2], 1'b0, 1'b1};
+            2'd2: plru[addr_index] <= {1'b1, plru[addr_index][1], 1'b0};
+            2'd3: plru[addr_index] <= {1'b0, plru[addr_index][1], 1'b0};
+        endcase
+    end
+    else if (state == S_CACHE_HIT) begin
+        case (hit_way)
+            2'd0: plru[addr_index] <= {plru[addr_index][2], 1'b1, 1'b1};
+            2'd1: plru[addr_index] <= {plru[addr_index][2], 1'b0, 1'b1};
+            2'd2: plru[addr_index] <= {1'b1, plru[addr_index][1], 1'b0};
+            2'd3: plru[addr_index] <= {1'b0, plru[addr_index][1], 1'b0};
+        endcase
+    end
+end
+
+// ============================================================
+// Load Result Mux (byte extract + sign extend)
+// ============================================================
+wire refill_hit_word = (state == S_REFILL_R) && M_AXI_RVALID && refill_rready && (refill_cnt == addr_word);
+wire [31:0] raw_word = (state == S_CACHE_HIT)  ? hit_word :
+                       refill_hit_word          ? M_AXI_RDATA :
+                       (state == S_REFILL_R)    ? cache_data[addr_index][victim_way_lat][addr_word] :
+                       (state == S_UNCACHE_R)   ? M_AXI_RDATA :
+                       32'b0;
+wire [31:0] shifted_data = raw_word >> lat_shift8;
+
+always @(posedge clock or posedge reset) begin
+  if (reset) begin
+    load_res <= 32'b0;
+  end
+  else begin
+    if (state == S_CACHE_HIT || state == S_REFILL_R || state == S_UNCACHE_R) begin
+      case (lat_exu_opt)
+          LB:      load_res <= {{24{shifted_data[7]}},  shifted_data[7:0]};
+          LH:      load_res <= {{16{shifted_data[15]}}, shifted_data[15:0]};
+          LW:      load_res <= shifted_data;
+          LBU:     load_res <= {24'b0, shifted_data[7:0]};
+          LHU:     load_res <= {16'b0, shifted_data[15:0]};
+          default: load_res <= 32'b0;
+      endcase
+    end
+  end
+end
+
+// ============================================================
+// Debug
+// ============================================================
+`ifdef DCACHE_DEBUG
+reg [15:0] dbg_stall_cnt;
+always @(posedge clock or posedge reset) begin
+    if (reset)
+        dbg_stall_cnt <= 0;
+    else if (state != S_IDLE && state != S_CHECK) begin
+        dbg_stall_cnt <= dbg_stall_cnt + 1;
+        if (dbg_stall_cnt == 16'd19999) begin
+            $display("[DCACHE] !! STALL: stuck in state %0d for 30000 cycles, addr=0x%0h", state, lat_addr);
+            $finish;
+        end
+    end
+    else
+        dbg_stall_cnt <= 0;
+end
+`endif
 
 endmodule
 
@@ -1255,7 +2059,8 @@ reg                  cache_valid [SET_NUMS-1:0][WAY_NUMS-1:0];
 // plru[s][0]=b0 (top), [1]=b1 (left child), [2]=b2 (right child)
 // Victim = { b0, b0 ? b2 : b1 }  → b0=0 picks left half, b0=1 picks right half
 // ============================================================
-reg [2:0] plru [SET_NUMS-1:0]; // 3 bits per set
+
+reg [WAY_NUMS-2:0] plru [SET_NUMS-1:0]; // 3 bits per set
 
 // ============================================================
 // AXI Control Registers
@@ -2018,7 +2823,7 @@ wire lsu_ram_finish;
 assign ifu_req = IFU_ARVALID;
 assign lsu_req = LSU_AWVALID || LSU_ARVALID;
 assign ifu_ram_finish = (SRAM_RLAST && IFU_RREADY);
-assign lsu_ram_finish = SRAM_BREADY || LSU_RREADY;
+assign lsu_ram_finish = (SRAM_BVALID && LSU_BREADY) || (SRAM_RLAST && LSU_RREADY);
 
 reg [2:0] state;
 localparam IDLE         = 3'b000;
@@ -2219,6 +3024,7 @@ wire                   [ISA_WIDTH-1:0]  ifu_req_addr               ;
 wire                                    icache_hit                 ;
 wire                                    fence_i                    ;
 
+
 //write address channel  
 wire                   [  31:0]         LSU_SRAM_AXI_AWADDR        ;
 wire                                    LSU_SRAM_AXI_AWVALID       ;
@@ -2227,7 +3033,7 @@ wire                   [   7:0]         LSU_SRAM_AXI_AWLEN         ;
 wire                   [   2:0]         LSU_SRAM_AXI_AWSIZE        ;
 wire                   [   1:0]         LSU_SRAM_AXI_AWBURST       ;
 wire                   [   3:0]         LSU_SRAM_AXI_AWID          ;
-//write data channel,
+//write data channel
 wire                                    LSU_SRAM_AXI_WVALID        ;
 wire                                    LSU_SRAM_AXI_WREADY        ;
 wire                   [  31:0]         LSU_SRAM_AXI_WDATA         ;
@@ -2241,8 +3047,7 @@ wire                                    IFU_SRAM_AXI_RVALID, LSU_SRAM_AXI_RVALID
 wire                                    IFU_SRAM_AXI_RREADY, LSU_SRAM_AXI_RREADY;
 wire                   [   3:0]         IFU_SRAM_AXI_RID,LSU_SRAM_AXI_RID;
 wire                                    IFU_SRAM_AXI_RLAST,LSU_SRAM_AXI_RLAST;
-    
-//read adress channel
+//read address channel
 wire                   [  31:0]         IFU_SRAM_AXI_ARADDR, LSU_SRAM_AXI_ARADDR;
 wire                                    IFU_SRAM_AXI_ARVALID, LSU_SRAM_AXI_ARVALID;
 wire                                    IFU_SRAM_AXI_ARREADY, LSU_SRAM_AXI_ARREADY;
@@ -2516,7 +3321,7 @@ ysyx_23060124_EXU exu1(
     .M_AXI_RREADY                      (LSU_SRAM_AXI_RREADY       ),
     .M_AXI_RID                         (LSU_SRAM_AXI_RID          ),
     .M_AXI_RLAST                       (LSU_SRAM_AXI_RLAST        ),
-  //read adress channel
+  //read address channel
     .M_AXI_ARADDR                      (LSU_SRAM_AXI_ARADDR       ),
     .M_AXI_ARVALID                     (LSU_SRAM_AXI_ARVALID      ),
     .M_AXI_ARREADY                     (LSU_SRAM_AXI_ARREADY      ),
@@ -2614,7 +3419,6 @@ ysyx_23060124_WBU wbu1(
     .o_wbu_csr_wen                     (wbu_csr_wen               ),
     .o_pre_ready                       (wbu2exu_ready             ) 
 );
-
 
 ysyx_23060124_Xbar xbar
 (
@@ -2756,50 +3560,93 @@ CLINT clint
 // import "DPI-C" function void csr_cnt_dpic    ();
 // import "DPI-C" function void brch_cnt_dpic   ();
 // import "DPI-C" function void jal_cnt_dpic    ();
-// import "DPI-C" function void ifu_start  ();
-// import "DPI-C" function void ifu_end  ();
-// import "DPI-C" function void icache_end  ();
-// import "DPI-C" function void load_start  ();
-// import "DPI-C" function void load_end  ();
-// import "DPI-C" function void store_start  ();
-// import "DPI-C" function void store_end  ();
+// import "DPI-C" function void load_cnt_dpic   ();
+// import "DPI-C" function void store_cnt_dpic  ();
+// import "DPI-C" function void inst_cnt_dpic   ();
+// import "DPI-C" function void ifu_start       ();
+// import "DPI-C" function void ifu_end         ();
+// import "DPI-C" function void icache_end      ();
+// import "DPI-C" function void cache_miss      ();
+// import "DPI-C" function void load_start      ();
+// import "DPI-C" function void load_end        ();
+// import "DPI-C" function void store_start     ();
+// import "DPI-C" function void store_end       ();
 
-
+// // ===========================================================================
+// // Performance Counters — Instruction Mix
+// // Counts at WBU commit point (exu2wbu signals are valid after exu_wbu_regs)
+// // ===========================================================================
 // always @(posedge clock) begin
-//   if(exu2wbu_brch) begin
-//     brch_cnt_dpic();
-//   end
-//   if(exu2wbu_jalr || exu2wbu_jal) begin
-//     jal_cnt_dpic();
-//   end
-//   if(exu2wbu_csr_wen) begin
-//     csr_cnt_dpic();
+//   if (!reset && exu2wbu_valid) begin
+//     inst_cnt_dpic();
+//     if (exu2wbu_brch) begin
+//       brch_cnt_dpic();
+//     end
+//     if (exu2wbu_jal || exu2wbu_jalr) begin
+//       jal_cnt_dpic();
+//     end
+//     if (exu2wbu_csr_wen) begin
+//       csr_cnt_dpic();
+//     end
 //   end
 // end
 
+// // ===========================================================================
+// // Performance Counters — Load / Store Instruction Count
+// // ===========================================================================
 // always @(posedge clock) begin
-//   if(IFU_SRAM_AXI_ARVALID && IFU_SRAM_AXI_ARREADY) begin
-//     ifu_start();
+//   if (!reset) begin
+//     if (LSU_SRAM_AXI_ARVALID && LSU_SRAM_AXI_ARREADY) begin
+//       load_cnt_dpic();
+//     end
+//     if (LSU_SRAM_AXI_AWVALID && LSU_SRAM_AXI_AWREADY) begin
+//       store_cnt_dpic();
+//     end
 //   end
-//   else if(IFU_SRAM_AXI_RREADY && IFU_SRAM_AXI_RLAST) begin
-//     ifu_end();
-//   end
-//   if(icache_hit) begin
-//     icache_end();
-//   end
+// end
 
-//   if(LSU_SRAM_AXI_ARREADY && LSU_SRAM_AXI_ARVALID) begin
-//     load_start();
+// // ===========================================================================
+// // Performance Counters — IFU Access Latency & ICache
+// // - ifu_start : AR handshake (cache miss, fetch begins)
+// // - ifu_end   : last read-data beat (fetch completes)
+// // - icache_end: cache hit   (1-cycle access)
+// // - cache_miss: every AR handshake is a cache miss
+// // ===========================================================================
+// always @(posedge clock) begin
+//   if (!reset) begin
+//     if (IFU_SRAM_AXI_ARVALID && IFU_SRAM_AXI_ARREADY) begin
+//       ifu_start();
+//       cache_miss();
+//     end
+//     if (IFU_SRAM_AXI_RVALID && IFU_SRAM_AXI_RREADY && IFU_SRAM_AXI_RLAST) begin
+//       ifu_end();
+//     end
+//     if (icache_hit) begin
+//       icache_end();
+//     end
 //   end
-//   else if(LSU_SRAM_AXI_RREADY && LSU_SRAM_AXI_RVALID) begin
-//     load_end();
-//   end
+// end
 
-//   if(LSU_SRAM_AXI_AWREADY && LSU_SRAM_AXI_AWVALID) begin
-//     store_start();
-//   end
-//   else if(LSU_SRAM_AXI_BREADY && LSU_SRAM_AXI_BVALID) begin
-//     store_end();
+// // ===========================================================================
+// // Performance Counters — LSU Access Latency
+// // - load_start / load_end   : AR handshake → last R beat
+// // - store_start / store_end : AW handshake → B response
+// // ===========================================================================
+// always @(posedge clock) begin
+//   if (!reset) begin
+//     if (LSU_SRAM_AXI_ARVALID && LSU_SRAM_AXI_ARREADY) begin
+//       load_start();
+//     end
+//     if (LSU_SRAM_AXI_RVALID && LSU_SRAM_AXI_RREADY && LSU_SRAM_AXI_RLAST) begin
+//       load_end();
+//     end
+
+//     if (LSU_SRAM_AXI_AWVALID && LSU_SRAM_AXI_AWREADY) begin
+//       store_start();
+//     end
+//     if (LSU_SRAM_AXI_BVALID && LSU_SRAM_AXI_BREADY) begin
+//       store_end();
+//     end
 //   end
 // end
 
@@ -2836,8 +3683,6 @@ module ysyx_23060124_WBU (
     output reg                          o_pc_update                 
 );
 
-
-wire [31:0] pc_next;
 
 assign o_rd_wdata       = i_res;
 assign o_csr_rd_wdata   = i_res;
